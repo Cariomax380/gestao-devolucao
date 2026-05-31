@@ -10,6 +10,12 @@ Ferramenta web para gestão e análise de devoluções de um Centro de Distribui
 - **Gráficos:** Recharts
 - **Deploy:** EasyPanel (VPS)
 
+## Pré-requisitos
+
+- Node.js 18+
+- Conta no [Supabase](https://supabase.com) (plano gratuito suficiente para desenvolvimento)
+- Claude Code instalado
+
 ## Como usar o prompt de kickoff
 
 O arquivo [`prompt-kickoff-gestao-devolucao.md`](./prompt-kickoff-gestao-devolucao.md) contém o prompt completo para iniciar o desenvolvimento com o Claude Code.
