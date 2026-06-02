@@ -1,126 +1,195 @@
 export const dynamic = 'force-dynamic'
 import { createClient } from '@/lib/supabase-server'
-import { formatPct, formatHL } from '@/lib/utils'
 import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
 import { Suspense } from 'react'
 import { getMotoristaMap, resolveMotorista } from '@/lib/motoristas'
+import { OfensoresClient } from './OfensoresClient'
 
-export default async function OfensoresPage({ searchParams }: { searchParams: Promise<{ periodo?: string }> }) {
+function calcZScores(valores: number[]) {
+  const n    = valores.length
+  const mean = valores.reduce((s, v) => s + v, 0) / n
+  const std  = Math.sqrt(valores.reduce((s, v) => s + (v - mean) ** 2, 0) / n) || 1
+  return { mean, std }
+}
+
+export default async function OfensoresPage({ searchParams }: { searchParams: Promise<{ periodo?: string; tab?: string }> }) {
   const supabase = await createClient()
-  const { periodo } = await searchParams
+  const { periodo, tab } = await searchParams
 
-  const [{ data }, { data: periodos }, motMap] = await Promise.all([
-    supabase.rpc('resumo_ofensores', { p_periodo: periodo ?? null }),
-    supabase.rpc('periodos_disponiveis'),
+  // Período efetivo (URL param ou mais recente)
+  const { data: periodos } = await supabase.rpc('periodos_disponiveis')
+  const periodoEfetivo: string | null = periodo ?? (periodos?.[0]?.periodo ?? null)
+
+  const [
+    { data: ofensoresRaw },
+    { data: pdvsForaRaw },
+    { data: reincidentesRaw },
+    { data: reincAgg },
+    motMap,
+  ] = await Promise.all([
+    supabase.rpc('resumo_ofensores', { p_periodo: periodoEfetivo }),
+    supabase
+      .from('devolucoes')
+      .select('motorista, codigo_pdv, cliente, motivo, pdvs_devolvidos')
+      .eq('dentro_raio', false)
+      .gt('pdvs_devolvidos', 0)
+      .eq('periodo', periodoEfetivo ?? ''),
+    supabase.rpc('resumo_pdvs_reincidentes', { p_periodo: periodoEfetivo }),
+    supabase.rpc('resumo_reincidencia',      { p_periodo: periodoEfetivo }),
     getMotoristaMap(),
   ])
 
-  const motoristas = (data ?? []).map((r: any) => ({
-    motorista: r.motorista as string,
-    fat: Number(r.fat), dev: Number(r.dev),
-    vol_fat: Number(r.vol_fat), vol_dev: Number(r.vol_dev),
-    fora_raio: Number(r.fora_raio), total: Number(r.total),
-    pct_dev: Number(r.fat) > 0 ? Number(r.dev) / Number(r.fat) * 100 : 0,
-    pct_fora: Number(r.total) > 0 ? Number(r.fora_raio) / Number(r.total) * 100 : 0,
-  })).filter((m: any) => m.fat >= 5)
+  // ── Loop único sobre pdvsForaRaw: soma devoluções + agrupa por motorista ──
+  const sumDevFora:      Record<string, number>   = {}
+  const pdvsPorMotorista: Record<string, { codigo_pdv: string; cliente: string; motivo: string; qtd: number }[]> = {}
 
-  const rankingPct  = [...motoristas].sort((a, b) => b.pct_dev - a.pct_dev)
-  const rankingVol  = [...motoristas].sort((a, b) => b.vol_dev - a.vol_dev)
-  const rankingFora = [...motoristas].sort((a, b) => b.pct_fora - a.pct_fora)
+  for (const r of pdvsForaRaw ?? []) {
+    const cod = String(r.motorista ?? '').trim()
+    if (!cod) continue
 
-  function prioridade(m: any) {
-    if (m.pct_dev > 15 && m.pct_fora > 30) return { label: 'Crítico',          cor: '#DC2626' }
-    if (m.pct_dev > 15)                     return { label: 'Alta Operacional', cor: '#D97706' }
-    if (m.pct_fora > 30)                    return { label: 'Alta Geográfica',  cor: '#7c3aed' }
-    if (m.vol_dev > 10)                     return { label: 'Monitor Volume',   cor: '#2563eb' }
-    return                                         { label: 'Monitoramento',    cor: '#6B7280' }
+    // soma de devoluções fora do raio
+    sumDevFora[cod] = (sumDevFora[cod] ?? 0) + Number(r.pdvs_devolvidos ?? 1)
+
+    // agrupamento por PDV
+    if (!pdvsPorMotorista[cod]) pdvsPorMotorista[cod] = []
+    const ex = pdvsPorMotorista[cod].find(p => p.codigo_pdv === r.codigo_pdv)
+    if (ex) {
+      ex.qtd++
+      if (!ex.motivo && r.motivo) ex.motivo = r.motivo
+    } else {
+      pdvsPorMotorista[cod].push({
+        codigo_pdv: r.codigo_pdv ?? '—',
+        cliente:    r.cliente    ?? '—',
+        motivo:     r.motivo     ?? '',
+        qtd: 1,
+      })
+    }
+  }
+  // ordena por qtd desc dentro de cada motorista
+  for (const cod of Object.keys(pdvsPorMotorista)) {
+    pdvsPorMotorista[cod].sort((a, b) => b.qtd - a.qtd)
   }
 
+  // ── Motoristas ────────────────────────────────────────────────────────────
+  const motoristas = (ofensoresRaw ?? [])
+    .map((r: any) => {
+      const cod     = String(r.motorista ?? '').trim()
+      const nome    = resolveMotorista(motMap, cod)
+      const fat     = Number(r.fat)
+      const dev     = Number(r.dev)
+      const devFora = sumDevFora[cod] ?? 0
+      return {
+        motorista: cod,
+        nome,
+        fat,
+        dev,
+        fora_raio: Number(r.fora_raio),
+        total:     Number(r.total),
+        dev_fora:  devFora,
+        pct_dev:   fat > 0 ? dev     / fat * 100 : 0,
+        pct_fora:  fat > 0 ? devFora / fat * 100 : 0,
+      }
+    })
+    .filter((m: any) => m.fat >= 5 && m.nome !== 'Sem motorista' && m.motorista !== '')
+    .sort((a: any, b: any) => b.pct_dev - a.pct_dev)
+
+  const statDev  = calcZScores(motoristas.map(m => m.pct_dev))
+  const statFora = calcZScores(motoristas.map(m => m.pct_fora))
+  const motoristasComScore = motoristas.map(m => ({
+    ...m,
+    score: 0.65 * ((m.pct_dev  - statDev.mean)  / statDev.std)
+         + 0.35 * ((m.pct_fora - statFora.mean) / statFora.std),
+  }))
+
+  const maxPctDev = Math.max(...motoristas.map(m => m.pct_dev), 0.01)
+
+  // ── pdvForaInfo: codigo_pdv → lista de motoristas que visitaram fora ──
+  const pdvForaInfo: Record<string, { motorista: string; nome: string; qtd: number }[]> = {}
+  for (const [cod, pdvs] of Object.entries(pdvsPorMotorista)) {
+    const nome = resolveMotorista(motMap, cod)
+    for (const pdv of pdvs) {
+      if (!pdvForaInfo[pdv.codigo_pdv]) pdvForaInfo[pdv.codigo_pdv] = []
+      const ex = pdvForaInfo[pdv.codigo_pdv].find(i => i.motorista === cod)
+      if (ex) ex.qtd += pdv.qtd
+      else pdvForaInfo[pdv.codigo_pdv].push({ motorista: cod, nome, qtd: pdv.qtd })
+    }
+  }
+
+  // ── Ranking fora do raio ───────────────────────────────────────────────
+  const rankingFora = [...motoristas]
+    .filter(m => m.dev_fora > 0)
+    .sort((a, b) => b.pct_fora - a.pct_fora)
+    .map(m => ({ motorista: m.motorista, nome: m.nome, dev_fora: m.dev_fora, fat: m.fat, pct_fora: m.pct_fora }))
+
+  const maxPctFora = Math.max(...rankingFora.map(m => m.pct_fora), 0.01)
+
+  // ── Pareto motivos fora do raio ────────────────────────────────────────
+  const aggMotivo: Record<string, number> = {}
+  for (const r of pdvsForaRaw ?? []) {
+    const m = (r.motivo as string) || 'Não informado'
+    aggMotivo[m] = (aggMotivo[m] ?? 0) + 1
+  }
+  const totalFora  = Object.values(aggMotivo).reduce((s, v) => s + v, 0)
+  const maxQtdFora = Math.max(...Object.values(aggMotivo), 1)
+  let acumFora = 0
+  const paretoFora = Object.entries(aggMotivo)
+    .sort((a, b) => b[1] - a[1])
+    .map(([motivo, qtd]) => {
+      acumFora += qtd
+      return { motivo, qtd, pct: totalFora > 0 ? qtd / totalFora * 100 : 0, acum: totalFora > 0 ? acumFora / totalFora * 100 : 0 }
+    })
+
+  // ── PDVs reincidentes ──────────────────────────────────────────────────
+  const reincidentes = (reincidentesRaw ?? []).map((r: any) => ({
+    codigo:  String(r.codigo_pdv),
+    cliente: String(r.cliente ?? ''),
+    dev:     Number(r.total_dev),
+    fat:     Number(r.total_fat),
+  }))
+
+  // ── Reincidência KPIs ──────────────────────────────────────────────────
+  const kpi = reincAgg?.[0] ?? null
+  const reincKpi = {
+    total:        Number(kpi?.total_pdvs        ?? 0),
+    comDev:       Number(kpi?.pdvs_com_devolucao ?? 0),
+    reincidentes: Number(kpi?.pdvs_reincidentes  ?? 0),
+    taxa:         Number(kpi?.taxa_reincidencia  ?? 0),
+  }
+
+  // ── Motoristas com PDVs fora do raio (para filtro) ─────────────────────
+  const motoristasComPdvFora = motoristasComScore
+    .filter(m => (pdvsPorMotorista[m.motorista]?.length ?? 0) > 0)
+    .map(m => ({ cod: m.motorista, nome: m.nome }))
+
   return (
-    <div className="p-8 space-y-8">
+    <div className="p-6 space-y-5">
       <div className="flex items-start justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-white">Ofensores</h1>
-          <p className="text-gray-500 text-sm mt-1">{motoristas.length} motoristas · base ≥ 5 PDVs</p>
+          <h1 className="font-semibold text-lg text-[#003087]">Ofensores & PDVs</h1>
+          <p className="text-gray-500 text-sm mt-0.5">
+            {motoristas.length} motoristas · {reincidentes.length} PDVs reincidentes · base ≥ 5 PDVs faturados
+          </p>
         </div>
         <Suspense><FiltroPeriodo periodos={periodos ?? []} /></Suspense>
       </div>
 
-      <div className="bg-[#141414] border border-white/5 rounded-xl p-6">
-        <h2 className="text-white font-semibold mb-4">Ranking — % Devolução PDV</h2>
-        <div className="overflow-y-auto max-h-96 pr-4">
-          <table className="w-full text-sm table-fixed">
-            <colgroup>
-              <col className="w-8" />
-              <col />
-              <col className="w-14" />
-              <col className="w-14" />
-              <col className="w-16" />
-              <col className="w-20" />
-              <col className="w-20" />
-              <col className="w-28" />
-            </colgroup>
-            <thead className="sticky top-0 bg-[#141414] z-10">
-              <tr className="text-gray-500 text-xs uppercase border-b border-white/5">
-                <th className="text-left pb-3">#</th>
-                <th className="text-left pb-3">Motorista</th>
-                <th className="text-right pb-3">Fat.</th>
-                <th className="text-right pb-3">Dev.</th>
-                <th className="text-right pb-3">% Dev.</th>
-                <th className="text-right pb-3">Vol HL</th>
-                <th className="text-right pb-3">F. Raio</th>
-                <th className="text-left pb-3 pl-3">Prioridade</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rankingPct.map((m: any, i: number) => {
-                const p = prioridade(m)
-                return (
-                  <tr key={m.motorista} className="border-b border-white/5 hover:bg-white/[0.02]">
-                    <td className="py-3 text-[#C9A84C] font-bold">{i + 1}</td>
-                    <td className="py-3 text-white font-medium">{resolveMotorista(motMap, m.motorista)}</td>
-                    <td className="py-3 text-right text-gray-400">{m.fat.toLocaleString('pt-BR')}</td>
-                    <td className="py-3 text-right text-gray-300">{m.dev.toLocaleString('pt-BR')}</td>
-                    <td className="py-3 text-right font-bold text-[#C9A84C]">{formatPct(m.pct_dev)}</td>
-                    <td className="py-3 text-right text-gray-300">{formatHL(m.vol_dev)}</td>
-                    <td className="py-3 text-right text-gray-400">{formatPct(m.pct_fora)}</td>
-                    <td className="py-3 pl-3">
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium" style={{ backgroundColor: p.cor + '20', color: p.cor }}>{p.label}</span>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="bg-[#141414] border border-white/5 rounded-xl p-6">
-          <h2 className="text-white font-semibold mb-4">Ranking — Volume Devolvido HL</h2>
-          <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-            {rankingVol.map((m: any, i: number) => (
-              <div key={m.motorista} className="flex items-center gap-3">
-                <span className="text-[#C9A84C] font-bold text-sm w-5">{i + 1}</span>
-                <span className="flex-1 text-gray-300 text-sm">{resolveMotorista(motMap, m.motorista)}</span>
-                <span className="text-white font-semibold text-sm">{formatHL(m.vol_dev)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-        <div className="bg-[#141414] border border-white/5 rounded-xl p-6">
-          <h2 className="text-white font-semibold mb-4">Ranking — Fora do Raio</h2>
-          <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
-            {rankingFora.map((m: any, i: number) => (
-              <div key={m.motorista} className="flex items-center gap-3">
-                <span className="text-[#C9A84C] font-bold text-sm w-5">{i + 1}</span>
-                <span className="flex-1 text-gray-300 text-sm">{resolveMotorista(motMap, m.motorista)}</span>
-                <span className="text-white font-semibold text-sm">{formatPct(m.pct_fora)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+      <OfensoresClient
+        key={periodoEfetivo ?? 'todos'}
+        initialTab={(tab === 'pdvs' ? 'pdvs' : 'motoristas')}
+        periodoEfetivo={periodoEfetivo}
+        motoristasComScore={motoristasComScore}
+        pdvsPorMotorista={pdvsPorMotorista}
+        maxPctDev={maxPctDev}
+        maxPctFora={maxPctFora}
+        paretoFora={paretoFora}
+        rankingFora={rankingFora}
+        totalFora={totalFora}
+        maxQtdFora={maxQtdFora}
+        reincidentes={reincidentes}
+        reincKpi={reincKpi}
+        pdvForaInfo={pdvForaInfo}
+        motoristasComPdvFora={motoristasComPdvFora}
+      />
     </div>
   )
 }

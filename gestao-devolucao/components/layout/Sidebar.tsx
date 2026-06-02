@@ -5,32 +5,35 @@ import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import {
   LayoutDashboard,
-  TrendingDown,
   AlertTriangle,
-  Store,
   RefreshCw,
   MapPin,
-  PieChart,
   ClipboardList,
   Upload,
   Settings,
   ChevronLeft,
   ChevronRight,
   LogOut,
+  TrendingUp,
+  Grid3x3,
+  Repeat2,
+  ArrowUpDown,
 } from 'lucide-react'
 import { useState } from 'react'
 import { logout } from '@/app/auth/actions'
 import { ImportDrawer } from './ImportDrawer'
 
 const navItems = [
-  { href: '/dashboard',     icon: LayoutDashboard, label: 'Dashboard' },
-  { href: '/ofensores',     icon: AlertTriangle,   label: 'Ofensores' },
-  { href: '/pdvs',          icon: Store,           label: 'PDVs' },
-  { href: '/reversoes',     icon: RefreshCw,       label: 'Reversões' },
-  { href: '/raio',          icon: MapPin,          label: 'Raio' },
-  { href: '/motivos',       icon: PieChart,        label: 'Motivos' },
-  { href: '/plano-acao',    icon: ClipboardList,   label: 'Plano de Ação' },
-  { href: '/configuracoes', icon: Settings,        label: 'Configurações' },
+  { href: '/dashboard',    icon: LayoutDashboard, label: 'Dashboard' },
+  { href: '/ofensores',    icon: AlertTriangle,   label: 'Ofensores & PDVs' },
+  { href: '/variacao',     icon: ArrowUpDown,     label: 'Variação' },
+  { href: '/reversoes',    icon: RefreshCw,       label: 'Reversões' },
+  { href: '/raio',         icon: MapPin,          label: 'Raio' },
+  { href: '/tendencia',    icon: TrendingUp,      label: 'Tendência' },
+  { href: '/calor',        icon: Grid3x3,         label: 'Mapa de Calor' },
+  { href: '/reincidencia', icon: Repeat2,         label: 'Reincidência' },
+  { href: '/plano-acao',   icon: ClipboardList,   label: 'Plano de Ação' },
+  { href: '/configuracoes',icon: Settings,        label: 'Configurações' },
 ]
 
 export function Sidebar() {
@@ -41,25 +44,25 @@ export function Sidebar() {
   return (
     <>
       <aside className={cn(
-        'flex flex-col h-screen bg-[#0A0A0A] border-r border-white/5 transition-all duration-300 shrink-0',
+        'flex flex-col h-screen bg-[#003087] transition-all duration-300 shrink-0',
         collapsed ? 'w-16' : 'w-56'
       )}>
         {/* Logo */}
         <div className={cn(
-          'flex items-center h-16 border-b border-white/5 px-4',
+          'flex items-center h-16 border-b border-white/10 px-4',
           collapsed ? 'justify-center' : 'justify-between'
         )}>
           {!collapsed && (
             <span className="text-lg font-black tracking-widest text-white">
-              GD<span className="text-[#C9A84C]">.</span>
+              Painel<span className="text-[#F2C800]">.</span>
             </span>
           )}
           {collapsed && (
-            <span className="text-lg font-black text-[#C9A84C]">G</span>
+            <span className="text-lg font-black text-[#F2C800]">P</span>
           )}
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className="text-gray-500 hover:text-[#C9A84C] transition-colors ml-2"
+            className="text-white/50 hover:text-[#F2C800] transition-colors ml-2"
           >
             {collapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
           </button>
@@ -76,8 +79,8 @@ export function Sidebar() {
                 className={cn(
                   'flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm font-medium transition-all duration-150',
                   active
-                    ? 'bg-[#C9A84C]/15 text-[#C9A84C] border border-[#C9A84C]/20'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-[#F2C800]/15 text-[#F2C800] border border-[#F2C800]/30'
+                    : 'text-white/70 hover:text-white hover:bg-white/10'
                 )}
                 title={collapsed ? label : undefined}
               >
@@ -92,7 +95,7 @@ export function Sidebar() {
             onClick={() => setImportOpen(true)}
             className={cn(
               'flex items-center gap-3 px-4 py-2.5 mx-2 rounded-lg text-sm font-medium transition-all duration-150 w-[calc(100%-16px)]',
-              'text-gray-400 hover:text-white hover:bg-white/5'
+              'text-white/70 hover:text-white hover:bg-white/10'
             )}
             title={collapsed ? 'Importação' : undefined}
           >
@@ -102,12 +105,12 @@ export function Sidebar() {
         </nav>
 
         {/* Logout */}
-        <div className="border-t border-white/5 p-3">
+        <div className="border-t border-white/10 p-3">
           <form action={logout}>
             <button
               type="submit"
               className={cn(
-                'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm text-gray-500 hover:text-red-400 hover:bg-red-400/5 transition-all',
+                'flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm text-white/50 hover:text-red-300 hover:bg-red-400/10 transition-all',
                 collapsed && 'justify-center'
               )}
               title={collapsed ? 'Sair' : undefined}

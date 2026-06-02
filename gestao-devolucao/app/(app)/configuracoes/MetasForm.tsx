@@ -55,18 +55,18 @@ export function MetasForm({ metasAtuais, periodos, periodoSelecionado }: Props) 
     })
   }
 
-  const inputCls = 'w-full bg-[#0a0a0a] border border-white/10 text-gray-200 text-sm rounded-lg px-3 py-2 text-right focus:border-[#C9A84C]/50 focus:outline-none'
+  const inputCls = 'w-full bg-white border border-gray-200 text-[#111111] text-sm rounded-lg px-3 py-2 text-right focus:border-[#F2C800] focus:outline-none'
 
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="space-y-4">
+    <form ref={formRef} onSubmit={handleSubmit} className="space-y-3">
       {/* Seletor de período */}
-      <div className="bg-[#141414] border border-white/5 rounded-xl p-5">
-        <label className="text-gray-500 text-xs mb-2 block uppercase tracking-wider">Período das metas</label>
+      <div className="bg-white border border-gray-100 rounded-xl p-5">
+        <label className="text-gray-500 text-xs mb-2 block font-medium">Período das metas</label>
         <select
           name="periodo"
           value={periodoSelecionado}
           onChange={onPeriodoChange}
-          className="w-full bg-[#0a0a0a] border border-white/10 text-gray-200 text-sm rounded-lg px-3 py-2 focus:border-[#C9A84C]/50 focus:outline-none"
+          className="w-full bg-white border border-gray-200 text-[#111111] text-sm rounded-lg px-3 py-2 focus:border-[#F2C800] focus:outline-none"
         >
           <option value="global">Global (padrão para todos os períodos)</option>
           {periodos.map(p => (
@@ -76,7 +76,7 @@ export function MetasForm({ metasAtuais, periodos, periodoSelecionado }: Props) 
           ))}
         </select>
         {periodoSelecionado !== 'global' && (
-          <p className="text-xs text-[#C9A84C]/70 mt-2">
+          <p className="text-xs text-[#D4A800] mt-2">
             Metas específicas deste período sobrepõem as globais ao filtrar por ele.
           </p>
         )}
@@ -84,10 +84,10 @@ export function MetasForm({ metasAtuais, periodos, periodoSelecionado }: Props) 
 
       {/* Indicadores */}
       {INDICADORES.map(({ key, label, unidade, dica }) => (
-        <div key={key} className="bg-[#141414] border border-white/5 rounded-xl p-5 flex items-center gap-6">
+        <div key={key} className="bg-white border border-gray-100 rounded-xl p-5 flex items-center gap-6">
           <div className="flex-1 min-w-0">
-            <p className="text-gray-200 text-sm font-medium">{label}</p>
-            <p className="text-gray-600 text-xs mt-0.5">{dica}</p>
+            <p className="text-[#111111] text-sm font-medium">{label}</p>
+            <p className="text-gray-400 text-xs mt-0.5">{dica}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <input
@@ -99,7 +99,7 @@ export function MetasForm({ metasAtuais, periodos, periodoSelecionado }: Props) 
               placeholder="—"
               className={`w-28 ${inputCls}`}
             />
-            <span className="text-gray-500 text-sm w-8">{unidade}</span>
+            <span className="text-gray-400 text-sm w-8">{unidade}</span>
           </div>
         </div>
       ))}
@@ -107,8 +107,8 @@ export function MetasForm({ metasAtuais, periodos, periodoSelecionado }: Props) 
       {msg && (
         <div className={`rounded-xl px-5 py-3 text-sm ${
           msg.tipo === 'ok'
-            ? 'bg-green-500/10 border border-green-500/20 text-green-400'
-            : 'bg-red-500/10 border border-red-500/20 text-red-400'
+            ? 'bg-[#10B981]/8 border border-[#10B981]/20 text-[#10B981]'
+            : 'bg-[#EF4444]/8 border border-[#EF4444]/20 text-[#EF4444]'
         }`}>
           {msg.texto}
         </div>
@@ -118,7 +118,7 @@ export function MetasForm({ metasAtuais, periodos, periodoSelecionado }: Props) 
         <button
           type="submit"
           disabled={isPending}
-          className="bg-[#C9A84C] hover:bg-[#b8933d] disabled:opacity-50 text-black text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+          className="bg-[#F2C800] hover:bg-[#D4A800] disabled:opacity-50 text-[#003087] text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
         >
           {isPending ? 'Salvando…' : 'Salvar metas'}
         </button>

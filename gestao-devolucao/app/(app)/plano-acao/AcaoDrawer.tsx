@@ -36,15 +36,15 @@ export function AcaoDrawer({ open, onOpenChange, acao }: Props) {
     })
   }
 
-  const inputCls = 'w-full bg-[#0a0a0a] border border-white/10 text-gray-200 text-sm rounded-lg px-3 py-2 focus:border-[#C9A84C]/50 focus:outline-none'
-  const labelCls = 'text-gray-500 text-xs mb-1 block'
+  const inputCls = 'w-full bg-white border border-gray-200 text-[#111111] text-sm rounded-lg px-3 py-2 focus:border-[#F2C800] focus:outline-none'
+  const labelCls = 'text-gray-500 text-xs mb-1 block font-medium'
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="right" className="w-[440px] bg-[#0D0D0D] border-l border-white/5 text-white p-0 flex flex-col">
-        <SheetHeader className="px-6 pt-6 pb-4 border-b border-white/5">
-          <SheetTitle className="text-white font-bold flex items-center gap-2">
-            <ClipboardList size={18} className="text-[#C9A84C]" />
+      <SheetContent side="right" className="w-[440px] bg-white border-l border-gray-100 text-[#111111] p-0 flex flex-col">
+        <SheetHeader className="px-6 pt-6 pb-4 border-b border-gray-100">
+          <SheetTitle className="text-[#003087] font-bold flex items-center gap-2">
+            <ClipboardList size={18} className="text-[#F2C800]" />
             {editando ? 'Editar ação' : 'Nova ação'}
           </SheetTitle>
         </SheetHeader>
@@ -126,22 +126,22 @@ export function AcaoDrawer({ open, onOpenChange, acao }: Props) {
             </div>
 
             {erro && (
-              <p className="text-red-400 text-sm bg-red-400/10 border border-red-400/20 rounded-lg px-4 py-2">{erro}</p>
+              <p className="text-[#EF4444] text-sm bg-[#EF4444]/8 border border-[#EF4444]/20 rounded-lg px-4 py-2">{erro}</p>
             )}
           </div>
 
-          <div className="px-6 pb-6 pt-4 border-t border-white/5 flex gap-3">
+          <div className="px-6 pb-6 pt-4 border-t border-gray-100 flex gap-3">
             <button
               type="button"
               onClick={() => onOpenChange(false)}
-              className="flex-1 h-11 rounded-xl border border-white/10 text-gray-400 text-sm hover:border-white/20 hover:text-white transition-all"
+              className="flex-1 h-11 rounded-lg border border-gray-200 text-gray-500 text-sm hover:border-gray-300 hover:text-[#111111] transition-all"
             >
               Cancelar
             </button>
             <button
               type="submit"
               disabled={isPending}
-              className="flex-1 h-11 rounded-xl font-semibold text-sm text-black bg-[#C9A84C] hover:bg-[#b8933d] disabled:opacity-50 transition-colors"
+              className="flex-1 h-11 rounded-lg font-semibold text-sm text-[#003087] bg-[#F2C800] hover:bg-[#D4A800] disabled:opacity-50 transition-colors"
             >
               {isPending ? 'Salvando…' : editando ? 'Salvar alterações' : 'Criar ação'}
             </button>
