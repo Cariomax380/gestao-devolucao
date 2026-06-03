@@ -647,7 +647,9 @@ BEGIN
     LEFT JOIN motoristas mot ON mot.codigo = d.motorista
     WHERE
       (p_periodo IS NULL OR d.periodo LIKE p_periodo || '%')
-      AND d.pdvs_devolvidos > 0
+      AND (d.pdvs_devolvidos > 0 OR d.pdv_repasse > 0)
+      -- Exclui reattempts sem motivo e sem devolução (evita "Sem motivo" inflado)
+      AND NOT (p_agrupamento = 'motivo' AND d.motivo IS NULL AND d.pdvs_devolvidos = 0)
   ),
   agg AS (
     SELECT
@@ -688,7 +690,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
   LEFT JOIN motoristas mot ON mot.codigo = d.motorista
   WHERE
     (p_periodo IS NULL OR d.periodo LIKE p_periodo || '%')
-    AND d.pdvs_devolvidos > 0
+    AND (d.pdvs_devolvidos > 0 OR d.pdv_repasse > 0)
+    AND NOT (d.motivo IS NULL AND d.pdvs_devolvidos = 0)
   GROUP BY
     COALESCE(TRIM(d.motivo), 'Sem motivo'),
     COALESCE(mot.nome, 'cód. ' || d.motorista, 'Sem motorista')
