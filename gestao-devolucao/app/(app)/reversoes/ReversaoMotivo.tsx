@@ -31,19 +31,23 @@ function TooltipPareto({ active, payload }: any) {
       <p className="font-semibold text-[#003087] mb-2 leading-tight">{d.grupo}</p>
       <div className="space-y-1">
         <div className="flex justify-between gap-4">
-          <span className="text-gray-400">QTD DEV</span>
-          <span className="font-semibold text-[#EF4444]">{d.qtd_dev.toLocaleString('pt-BR')}</span>
+          <span className="text-gray-400">Total devoluções</span>
+          <span className="font-semibold text-[#003087]">{d.total_oportunidades.toLocaleString('pt-BR')}</span>
         </div>
         <div className="flex justify-between gap-4">
-          <span className="text-gray-400">QTD REV</span>
+          <span className="text-gray-400">Revertidos (REV)</span>
           <span className="font-semibold text-[#10B981]">{d.qtd_rev.toLocaleString('pt-BR')}</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-gray-400">Não revertidos (DEV)</span>
+          <span className="font-semibold text-[#EF4444]">{d.qtd_dev.toLocaleString('pt-BR')}</span>
         </div>
         <div className="flex justify-between gap-4">
           <span className="text-gray-400">% Reversão</span>
           <span className="font-bold text-[#7c3aed]">{d.percentual_reversao_formatado}</span>
         </div>
         <div className="border-t border-gray-50 pt-1 flex justify-between gap-4">
-          <span className="text-gray-400">Acumulado DEV</span>
+          <span className="text-gray-400">% acumulado</span>
           <span className="font-semibold text-[#003087]">{d.acumPct.toFixed(1)}%</span>
         </div>
       </div>
@@ -89,14 +93,15 @@ export function ReversaoMotivo({ motivos, cruzado }: Props) {
   if (!motivos.length) return null
 
   // ── Pareto ────────────────────────────────────────────────────────────────
-  const totalDev = motivos.reduce((s, m) => s + m.qtd_dev, 0) || 1
+  // Usa total_oportunidades (REV + DEV) — mesmo denominador do % Reversão
+  const totalOport = motivos.reduce((s, m) => s + m.total_oportunidades, 0) || 1
   let acum = 0
   const paretoData = motivos
     .slice()
-    .sort((a, b) => b.qtd_dev - a.qtd_dev)
+    .sort((a, b) => b.total_oportunidades - a.total_oportunidades)
     .map(m => {
-      acum += m.qtd_dev
-      return { ...m, acumPct: (acum / totalDev) * 100 }
+      acum += m.total_oportunidades
+      return { ...m, acumPct: (acum / totalOport) * 100 }
     })
 
   // ── % Reversão por motivo (maior → menor) ─────────────────────────────────
@@ -128,7 +133,7 @@ export function ReversaoMotivo({ motivos, cruzado }: Props) {
   const maxRev = Math.max(...cruzado.map(r => r.qtd_rev), 1)
   const maxDev = Math.max(...cruzado.map(r => r.qtd_dev), 1)
 
-  const motivosHeat = motivos.slice().sort((a, b) => b.qtd_dev - a.qtd_dev)
+  const motivosHeat = motivos.slice().sort((a, b) => b.total_oportunidades - a.total_oportunidades)
 
   return (
     <div className="space-y-4">
@@ -140,7 +145,7 @@ export function ReversaoMotivo({ motivos, cruzado }: Props) {
         <div className="bg-white border border-gray-100 rounded-xl p-5">
           <p className="text-sm font-semibold text-[#003087] mb-0.5">Pareto de Devoluções por Motivo</p>
           <p className="text-xs text-gray-400 mb-4">
-            Barras = QTD DEV &nbsp;·&nbsp; Linha = % acumulada &nbsp;·&nbsp; <span className="text-[#7c3aed]">traço 80%</span>
+            Barras = Total devoluções (REV + DEV) &nbsp;·&nbsp; Linha = % acumulada &nbsp;·&nbsp; <span className="text-[#7c3aed]">traço 80%</span>
           </p>
           <ResponsiveContainer width="100%" height={220}>
             <ComposedChart data={paretoData} margin={{ top: 8, right: 28, left: -18, bottom: 44 }}>
@@ -172,7 +177,7 @@ export function ReversaoMotivo({ motivos, cruzado }: Props) {
               />
               <ReferenceLine yAxisId="right" y={80} stroke="#7c3aed" strokeDasharray="3 3" strokeOpacity={0.35} />
               <Tooltip content={<TooltipPareto />} />
-              <Bar yAxisId="left" dataKey="qtd_dev" fill="#F2C800" radius={[3, 3, 0, 0]} />
+              <Bar yAxisId="left" dataKey="total_oportunidades" fill="#F2C800" radius={[3, 3, 0, 0]} />
               <Line
                 yAxisId="right"
                 type="monotone"
@@ -242,7 +247,7 @@ export function ReversaoMotivo({ motivos, cruzado }: Props) {
             <div>
               <p className="text-sm font-semibold text-[#003087]">Reversão por Motivo × Motorista</p>
               <p className="text-xs text-gray-400 mt-0.5">
-                Top {topMotoristas.length} motoristas por oportunidades · motivos ordenados por QTD DEV
+                Top {topMotoristas.length} motoristas por oportunidades · motivos ordenados por total de devoluções
               </p>
             </div>
             <div className="flex gap-1">
