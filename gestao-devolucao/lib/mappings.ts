@@ -11,7 +11,7 @@ export const STATUS_MAP: Record<string, string> = {
   'ENTREGA PARCIAL': 'devolvido_parcial',
   'REAGENDADO':      'reagendado',
   'NÃO INICIADA':    'tratativa_aberta',
-  'EM TRATAMENTO':   'tratativa_aberta',
+  'EM TRATAMENTO':   'em_tratamento',
   'INICIADA':        'tratativa_aberta',
   'A CAMINHO':       'tratativa_aberta',
   // Inglês (fallback para arquivos legados)
@@ -20,7 +20,7 @@ export const STATUS_MAP: Record<string, string> = {
   'PARTIAL_DELIVERY':     'devolvido_parcial',
   'RESCHEDULED':          'reagendado',
   'NOT_STARTED':          'tratativa_aberta',
-  'IN_TREATMENT':         'tratativa_aberta',
+  'IN_TREATMENT':         'em_tratamento',
   'DELIVERY_STARTED':     'tratativa_aberta',
   'ON_THE_WAY':           'tratativa_aberta',
 }

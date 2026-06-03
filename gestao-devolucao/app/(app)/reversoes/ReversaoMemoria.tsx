@@ -1,38 +1,29 @@
 'use client'
 
-import { useState, useMemo } from 'react'
-import {
-  calcularReversao,
-  type Agrupamento,
-  type RegistroReversao,
-} from '@/lib/calcular-reversao'
+import { useState } from 'react'
+import type { ResultadoReversao, Agrupamento } from '@/lib/calcular-reversao'
 
 const AGRUPAMENTOS: { key: Agrupamento; label: string }[] = [
-  { key: 'geral',     label: 'Geral'      },
-  { key: 'motorista', label: 'Motorista'  },
-  { key: 'cod_pdv',   label: 'PDV'        },
-  { key: 'data',      label: 'Data'       },
-  { key: 'motivo',    label: 'Motivo'     },
-  { key: 'rota',      label: 'Rota'       },
+  { key: 'geral',     label: 'Geral'     },
+  { key: 'motorista', label: 'Motorista' },
+  { key: 'cod_pdv',   label: 'PDV'       },
+  { key: 'data',      label: 'Data'      },
+  { key: 'motivo',    label: 'Motivo'    },
+  { key: 'rota',      label: 'Rota'      },
 ]
 
 interface Props {
-  registros: RegistroReversao[]
+  dados: Record<Agrupamento, ResultadoReversao[]>
 }
 
-export function ReversaoMemoria({ registros }: Props) {
+export function ReversaoMemoria({ dados }: Props) {
   const [agrupamento, setAgrupamento] = useState<Agrupamento>('motorista')
 
-  const resultado = useMemo(
-    () => calcularReversao(registros, agrupamento),
-    [registros, agrupamento],
-  )
-
-  const totalRegistros = registros.filter(
-    r => (r.pdv_repasse ?? 0) > 0 || (r.pdvs_devolvidos ?? 0) > 0,
-  ).length
-
+  const resultado  = dados[agrupamento] ?? []
   const labelGrupo = AGRUPAMENTOS.find(a => a.key === agrupamento)?.label ?? 'Grupo'
+
+  // Total de oportunidades vem da linha "Geral"
+  const totalOportunidades = dados.geral[0]?.total_oportunidades ?? 0
 
   return (
     <div className="bg-white border border-gray-100 rounded-xl p-5">
@@ -104,7 +95,6 @@ export function ReversaoMemoria({ registros }: Props) {
                 </td>
                 <td className="py-2.5 px-3">
                   <div className="flex items-center justify-end gap-2">
-                    {/* Mini barra de progresso */}
                     <div className="w-16 bg-gray-100 rounded-full h-1.5 overflow-hidden shrink-0">
                       <div
                         className="h-full rounded-full bg-[#7c3aed]"
@@ -135,7 +125,7 @@ export function ReversaoMemoria({ registros }: Props) {
         <p className="text-[10px] text-gray-400 mt-3 text-right">
           {resultado.length} grupo{resultado.length !== 1 ? 's' : ''}
           {' · '}
-          {totalRegistros.toLocaleString('pt-BR')} registro{totalRegistros !== 1 ? 's' : ''} processado{totalRegistros !== 1 ? 's' : ''}
+          {totalOportunidades.toLocaleString('pt-BR')} oportunidade{totalOportunidades !== 1 ? 's' : ''} no período
         </p>
       )}
     </div>

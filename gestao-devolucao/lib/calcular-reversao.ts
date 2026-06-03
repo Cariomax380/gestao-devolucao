@@ -89,7 +89,7 @@ export function calcularReversao(
   const mapa = new Map<string, { qtd_rev: number; qtd_dev: number }>()
 
   // Status que compõem QTD DEV
-  const STATUS_DEV = new Set(['devolvido', 'devolvido_parcial', 'tratativa_aberta'])
+  const STATUS_DEV = new Set(['devolvido', 'devolvido_parcial', 'em_tratamento'])
 
   for (const r of dados) {
     // QTD REV: coluna reattempt = 1 na planilha → pdv_repasse no banco

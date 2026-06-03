@@ -207,7 +207,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
     SUM(volume_devolvido_hl),
     COALESCE(SUM(devolucoes_revertidas), 0)::bigint
   FROM public.devolucoes
-  WHERE (p_periodo     IS NULL OR periodo LIKE p_periodo || '%')
+  WHERE status_final != 'tratativa_aberta'
+    AND (p_periodo     IS NULL OR periodo LIKE p_periodo || '%')
     AND (p_data_inicio IS NULL OR data_rota >= p_data_inicio)
     AND (p_data_fim    IS NULL OR data_rota <= p_data_fim)
     AND (p_motorista   IS NULL OR motorista  = p_motorista)
@@ -234,7 +235,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
     ROUND(SUM(volume_faturado_hl)::numeric, 2)                                   AS vol_fat,
     ROUND(SUM(volume_devolvido_hl)::numeric, 2)                                  AS vol_dev
   FROM public.devolucoes
-  WHERE data_rota IS NOT NULL
+  WHERE status_final != 'tratativa_aberta'
+    AND data_rota IS NOT NULL
     AND (p_periodo     IS NULL OR periodo LIKE p_periodo || '%')
     AND (p_data_inicio IS NULL OR data_rota >= p_data_inicio)
     AND (p_data_fim    IS NULL OR data_rota <= p_data_fim)
@@ -302,7 +304,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
     ROUND(SUM(volume_devolvido_hl)::numeric, 2),
     ROUND(SUM(volume_devolvido_hl)::numeric / NULLIF(SUM(volume_faturado_hl),0) * 100, 2)
   FROM public.devolucoes
-  WHERE motorista IS NOT NULL
+  WHERE status_final != 'tratativa_aberta'
+    AND motorista IS NOT NULL
     AND (p_periodo     IS NULL OR periodo LIKE p_periodo || '%')
     AND (p_data_inicio IS NULL OR data_rota >= p_data_inicio)
     AND (p_data_fim    IS NULL OR data_rota <= p_data_fim)
@@ -369,7 +372,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
     COUNT(*) FILTER (WHERE dentro_raio = false)::bigint,
     COALESCE(SUM(pdvs_faturados), 0)::bigint
   FROM public.devolucoes
-  WHERE motorista IS NOT NULL
+  WHERE status_final != 'tratativa_aberta'
+    AND motorista IS NOT NULL
     AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
   GROUP BY motorista;
 $$;
@@ -384,7 +388,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
     COUNT(*)::bigint,
     COUNT(*) FILTER (WHERE dentro_raio = true)::bigint
   FROM public.devolucoes
-  WHERE (p_periodo IS NULL OR periodo LIKE p_periodo || '%');
+  WHERE status_final != 'tratativa_aberta'
+    AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%');
 $$;
 
 -- ----------------------------------------------------------------
@@ -417,7 +422,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
     SUM(pdvs_devolvidos)::bigint,
     COUNT(*)::bigint
   FROM public.devolucoes
-  WHERE (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
+  WHERE status_final != 'tratativa_aberta'
+    AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
   GROUP BY codigo_pdv
   HAVING SUM(pdvs_devolvidos) >= 2
   ORDER BY 3 DESC;
@@ -441,15 +447,15 @@ LANGUAGE sql SECURITY DEFINER AS $$
     WHERE (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
   )
   SELECT
-    -- QTD DEV = todos os devolvidos + tratativa_aberta (independente de reattempt)
-    COUNT(*) FILTER (WHERE status_final IN ('devolvido','devolvido_parcial','tratativa_aberta'))::bigint,
+    -- QTD DEV = registros com pdvs_devolvidos > 0 (DEFINITELY_RETURNED + PARTIAL_DELIVERY + IN_TREATMENT)
+    -- NOT_STARTED (tratativa_aberta) tem pdvs_devolvidos=0 e NÃO entra aqui
+    COUNT(*) FILTER (WHERE pdvs_devolvidos > 0)::bigint,
     SUM(pdv_repasse)::bigint,
     SUM(devolucoes_revertidas)::bigint,
     (SELECT jsonb_agg(row_to_json(t) ORDER BY t.data_rota DESC)
      FROM (
        SELECT data_rota::text, motorista, cliente, motivo
        FROM base WHERE status_final = 'tratativa_aberta'
-       LIMIT 200
      ) t)
   FROM base;
 $$;
@@ -466,7 +472,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
     COALESCE(SUM(pdvs_devolvidos), 0)::bigint,
     ROUND(SUM(pdvs_devolvidos)::numeric / NULLIF(SUM(pdvs_faturados),0) * 100, 2)
   FROM public.devolucoes
-  WHERE (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
+  WHERE status_final != 'tratativa_aberta'
+    AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
   GROUP BY 1
   ORDER BY 1;
 $$;
@@ -508,7 +515,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
       COUNT(*)::bigint             AS fat,
       SUM(pdvs_devolvidos)::bigint AS dev
     FROM public.devolucoes
-    WHERE (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
+    WHERE status_final != 'tratativa_aberta'
+      AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
     GROUP BY codigo_pdv
   )
   SELECT
@@ -550,7 +558,8 @@ BEGIN
            COALESCE(SUM(d.pdvs_faturados), 0)::bigint AS fat,
            COALESCE(SUM(d.pdvs_devolvidos), 0)::bigint AS dev
     FROM public.devolucoes d
-    WHERE d.periodo LIKE p_periodo || '%'
+    WHERE d.status_final != 'tratativa_aberta'
+      AND d.periodo LIKE p_periodo || '%'
     GROUP BY d.motorista HAVING SUM(d.pdvs_faturados) >= 1
   ),
   anterior AS (
@@ -558,7 +567,8 @@ BEGIN
            COALESCE(SUM(d.pdvs_faturados), 0)::bigint AS fat,
            COALESCE(SUM(d.pdvs_devolvidos), 0)::bigint AS dev
     FROM public.devolucoes d
-    WHERE d.periodo = v_ant
+    WHERE d.status_final != 'tratativa_aberta'
+      AND d.periodo = v_ant
     GROUP BY d.motorista
   )
   SELECT
@@ -577,6 +587,87 @@ $$;
 
 
 -- ================================================================
+-- ----------------------------------------------------------------
+-- 17. resumo_reversoes_mensal — evolução mensal de reversão
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION resumo_reversoes_mensal(p_periodo text DEFAULT NULL)
+RETURNS TABLE(
+  periodo      text,
+  qtd_rev      bigint,
+  qtd_dev      bigint,
+  pct_reversao numeric
+)
+LANGUAGE sql SECURITY DEFINER AS $$
+  SELECT
+    periodo,
+    SUM(pdv_repasse)::bigint AS qtd_rev,
+    COUNT(*) FILTER (WHERE pdvs_devolvidos > 0)::bigint AS qtd_dev,
+    ROUND(
+      SUM(pdv_repasse)::numeric
+      / NULLIF(SUM(pdv_repasse) + COUNT(*) FILTER (WHERE pdvs_devolvidos > 0), 0) * 100, 2
+    ) AS pct_reversao
+  FROM public.devolucoes
+  WHERE status_final != 'tratativa_aberta'
+    AND (p_periodo IS NULL OR periodo LIKE SUBSTRING(p_periodo, 1, 4) || '%')
+  GROUP BY periodo
+  ORDER BY periodo;
+$$;
+
+-- ----------------------------------------------------------------
+-- 18. resumo_reversoes_agrupado — memória de cálculo por dimensão
+-- ----------------------------------------------------------------
+DROP FUNCTION IF EXISTS resumo_reversoes_agrupado(text, text);
+CREATE OR REPLACE FUNCTION resumo_reversoes_agrupado(
+  p_periodo     text DEFAULT NULL,
+  p_agrupamento text DEFAULT 'motorista'
+)
+RETURNS TABLE(
+  grupo               text,
+  qtd_rev             bigint,
+  qtd_dev             bigint,
+  total_oportunidades bigint
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  RETURN QUERY
+  WITH base AS (
+    SELECT
+      CASE p_agrupamento
+        WHEN 'motorista' THEN COALESCE(mot.nome, 'cód. ' || d.motorista, 'Sem motorista')
+        WHEN 'cod_pdv'   THEN COALESCE(TRIM(d.codigo_pdv::text), 'Sem código')
+        WHEN 'data'      THEN COALESCE(d.data_rota::text, 'Sem data')
+        WHEN 'motivo'    THEN COALESCE(TRIM(d.motivo), 'Sem motivo')
+        WHEN 'rota'      THEN COALESCE(TRIM(d.rota), 'Sem rota')
+        ELSE 'Geral'
+      END AS grp,
+      CASE WHEN d.pdv_repasse > 0 THEN 1 ELSE 0 END AS flag_rev,
+      CASE WHEN d.pdvs_devolvidos > 0 THEN 1 ELSE 0 END AS flag_dev
+    FROM devolucoes d
+    LEFT JOIN motoristas mot ON mot.codigo = d.motorista
+    WHERE
+      (p_periodo IS NULL OR d.periodo LIKE p_periodo || '%')
+      AND (d.pdvs_devolvidos > 0 OR d.pdv_repasse > 0)
+  ),
+  agg AS (
+    SELECT
+      grp,
+      SUM(flag_rev)::bigint AS qr,
+      SUM(flag_dev)::bigint AS qd
+    FROM base
+    GROUP BY grp
+    HAVING SUM(flag_rev) + SUM(flag_dev) > 0
+  )
+  SELECT
+    grp       AS grupo,
+    qr        AS qtd_rev,
+    qd        AS qtd_dev,
+    (qr + qd) AS total_oportunidades
+  FROM agg
+  ORDER BY qr DESC, (qr::float / NULLIF(qr + qd, 0)) DESC;
+END;
+$$;
+
 -- PERMISSÕES
 -- ================================================================
 
@@ -596,3 +687,5 @@ GRANT EXECUTE ON FUNCTION resumo_tendencia_semanal(text)            TO authentic
 GRANT EXECUTE ON FUNCTION resumo_calor_motivo_dia(text)             TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION resumo_reincidencia(text)                 TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION resumo_ofensores_variacao(text)           TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_reversoes_mensal(text)             TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_reversoes_agrupado(text, text)     TO authenticated, service_role;

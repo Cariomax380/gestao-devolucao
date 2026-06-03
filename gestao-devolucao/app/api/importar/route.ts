@@ -65,6 +65,7 @@ function normalizar(r: Record<string, unknown>, importacaoId: string) {
   const statusRaw  = String(r.status ?? '').toUpperCase().trim()
   const motivoRaw  = String(r.last_reason_waiting_modulation ?? '')
   const motivoInfo = MOTIVO_MAP[motivoRaw]
+  const statusFinal = STATUS_MAP[statusRaw] ?? 'tratativa_aberta'
   const isDevolvido = ['DEVOLVIDO', 'ENTREGA PARCIAL', 'EM TRATAMENTO',
     'DEFINITELY_RETURNED', 'PARTIAL_DELIVERY', 'IN_TREATMENT'].includes(statusRaw)
 
@@ -82,10 +83,10 @@ function normalizar(r: Record<string, unknown>, importacaoId: string) {
     motorista:        String(r.driver_external_id ?? ''),
     cliente:          String(r.poc_name ?? ''),
     codigo_pdv:       String(r.poc_external_id ?? ''),
-    status_final:     STATUS_MAP[statusRaw] ?? 'tratativa_aberta',
+    status_final:     statusFinal,
     motivo:           motivoInfo?.label ?? (motivoRaw || null),
     classificacao_motivo: motivoInfo?.classificacao ?? null,
-    // PDVs excluídos: não contam em quantidade, mas o HL entra na somatória de volume
+    // pdvs_faturados: contado pelo código do PDV, exceto os explicitamente excluídos
     pdvs_faturados:   isPdvExcluido(r.poc_external_id) ? 0 : 1,
     pdvs_devolvidos:  isPdvExcluido(r.poc_external_id) ? 0 : (isDevolvido ? 1 : 0),
     pdv_repasse:      pdvRepasse,

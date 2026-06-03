@@ -1,7 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
 
   const supabase = createServerClient(
@@ -24,12 +24,10 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
-  // Redireciona para login se não autenticado (exceto a própria rota de login)
   if (!user && pathname !== '/login') {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // Redireciona para dashboard se já autenticado e tentar acessar login
   if (user && pathname === '/login') {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
@@ -38,7 +36,6 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Exclui rotas de API do middleware — o limite de 10MB do edge não se aplica
-  // A autenticação nas APIs é verificada dentro de cada route handler
+  // Exclui rotas de API do proxy — a autenticação é verificada dentro de cada route handler
   matcher: ['/((?!_next/static|_next/image|favicon.ico|api/.*|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 }

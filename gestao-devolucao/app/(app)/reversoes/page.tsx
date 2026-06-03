@@ -2,11 +2,30 @@ export const dynamic = 'force-dynamic'
 import { createClient } from '@/lib/supabase-server'
 import { formatPct } from '@/lib/utils'
 import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
-import { getMotoristaMap, resolveMotorista } from '@/lib/motoristas'
 import { Suspense } from 'react'
 import { ReversaoMemoria } from './ReversaoMemoria'
-import type { RegistroReversao } from '@/lib/calcular-reversao'
+import { ReversaoGraficos } from './ReversaoGraficos'
+import type { ResultadoReversao, Agrupamento } from '@/lib/calcular-reversao'
 import { ErroRPC } from '@/components/layout/ErroRPC'
+
+type RPCRow = { grupo: string; qtd_rev: number; qtd_dev: number; total_oportunidades: number }
+
+function mapAgrupamento(rows: RPCRow[] | null): ResultadoReversao[] {
+  return (rows ?? []).map(r => {
+    const qtd_rev = Number(r.qtd_rev)
+    const qtd_dev = Number(r.qtd_dev)
+    const total   = qtd_rev + qtd_dev
+    const pct     = total > 0 ? qtd_rev / total : 0
+    return {
+      grupo:                         r.grupo ?? '',
+      qtd_rev,
+      qtd_dev,
+      total_oportunidades:           Number(r.total_oportunidades),
+      percentual_reversao:           pct,
+      percentual_reversao_formatado: `${(pct * 100).toFixed(2).replace('.', ',')}%`,
+    }
+  })
+}
 
 export default async function ReversaoPage({
   searchParams,
@@ -15,26 +34,28 @@ export default async function ReversaoPage({
 }) {
   const supabase = await createClient()
   const { periodo } = await searchParams
-
-  // ── Busca paralela: KPIs (RPC) + registros brutos + períodos + motoristas ──
-  // Inclui devolvidos, repasses E tratativas_abertas (pendentes = devolução não revertida)
-  let rawQuery = supabase
-    .from('devolucoes')
-    .select('status_final, pdvs_devolvidos, pdv_repasse, motorista, codigo_pdv, data_rota, motivo, rota')
-    .or('pdvs_devolvidos.gt.0,pdv_repasse.gt.0,status_final.eq.tratativa_aberta')
-
-  if (periodo) rawQuery = rawQuery.like('periodo', `${periodo}%`)
+  const p = periodo ?? null
 
   const [
     { data: res, error: errRes },
     { data: periodos },
-    { data: rawRows },
-    motMap,
+    { data: rowGeral },
+    { data: rowMotorista },
+    { data: rowPdv },
+    { data: rowData },
+    { data: rowMotivo },
+    { data: rowRota },
+    { data: rowMensal },
   ] = await Promise.all([
-    supabase.rpc('resumo_reversoes', { p_periodo: periodo ?? null }),
+    supabase.rpc('resumo_reversoes',          { p_periodo: p }),
     supabase.rpc('periodos_disponiveis'),
-    rawQuery,
-    getMotoristaMap(),
+    supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'geral'     }),
+    supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'motorista' }),
+    supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'cod_pdv'   }),
+    supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'data'      }),
+    supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'motivo'    }),
+    supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'rota'      }),
+    supabase.rpc('resumo_reversoes_mensal',   { p_periodo: p }),
   ])
 
   if (errRes) return <ErroRPC nome="resumo_reversoes" />
@@ -43,36 +64,36 @@ export default async function ReversaoPage({
   const kpi          = res?.[0] ?? {}
   const totalDev     = Number(kpi.total_dev    ?? 0)
   const totalRepasse = Number(kpi.total_repasse ?? 0)
-  const totalRevert  = Number(kpi.total_revert  ?? 0)
 
-  interface Tratativa {
-    data_rota: string | null
-    motorista: string | null
-    cliente?:  string | null  // opcional: pode não vir da RPC dependendo da versão
-    motivo:    string | null
-  }
-  const tratativas: Tratativa[] = kpi.tratativas_abertas ?? []
-
-  // % Reversão = QTD REV / (QTD DEV + QTD REV)
-  // QTD DEV = todos os devolvidos + tratativas (independente de reattempt)
-  // QTD REV = SUM(pdv_repasse) — reattempts entregues
-  // Um registro pode contar nos dois lados (devolvido que também teve reattempt)
   const totalOportunidades = totalDev + totalRepasse
   const pctReversao = totalOportunidades > 0
     ? (totalRepasse / totalOportunidades) * 100
     : null
 
-  // ── Registros para memória de cálculo ─────────────────────────────────────
-  const registros: RegistroReversao[] = (rawRows ?? []).map(r => ({
-    status_final:    r.status_final ?? null,
-    pdvs_devolvidos: Number(r.pdvs_devolvidos ?? 0),
-    pdv_repasse:     Number(r.pdv_repasse     ?? 0),
-    motorista_nome:  resolveMotorista(motMap, r.motorista),
-    codigo_pdv:      r.codigo_pdv ? String(r.codigo_pdv).trim() : null,
-    data_rota:       r.data_rota ?? null,
-    motivo:          r.motivo    ?? null,
-    rota:            r.rota      ?? null,
+  // ── Dados da memória de cálculo ───────────────────────────────────────────
+  const memoriaData: Record<Agrupamento, ResultadoReversao[]> = {
+    geral:     mapAgrupamento(rowGeral     as RPCRow[] | null),
+    motorista: mapAgrupamento(rowMotorista as RPCRow[] | null),
+    cod_pdv:   mapAgrupamento(rowPdv       as RPCRow[] | null),
+    data:      mapAgrupamento(rowData      as RPCRow[] | null),
+    motivo:    mapAgrupamento(rowMotivo    as RPCRow[] | null),
+    rota:      mapAgrupamento(rowRota      as RPCRow[] | null),
+  }
+
+  // ── Dados mensais para gráfico de tendência ───────────────────────────────
+  const dadosMensais = (rowMensal ?? []).map((r: any) => ({
+    periodo:      r.periodo as string,
+    qtd_rev:      Number(r.qtd_rev),
+    qtd_dev:      Number(r.qtd_dev),
+    pct_reversao: Number(r.pct_reversao),
   }))
+
+  // ── Motoristas sem nenhum repasse no período ───────────────────────────────
+  const semReversao = memoriaData.motorista
+    .filter(r => r.qtd_rev === 0 && r.qtd_dev > 0)
+    .sort((a, b) => b.qtd_dev - a.qtd_dev)
+
+  const qtdSemReversao = semReversao.length
 
   return (
     <div className="p-6 space-y-6">
@@ -90,95 +111,78 @@ export default async function ReversaoPage({
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-        {[
-          {
-            label: 'Total Devolvidos',
-            value: totalDev.toLocaleString('pt-BR'),
-            accent: '#F2C800',
-            sub:    'devolvidos não revertidos',
-          },
-          {
-            label: 'Repasses',
-            value: totalRepasse.toLocaleString('pt-BR'),
-            accent: '#F2C800',
-            sub:    'QTD REV — revertidas via repasse',
-          },
-          {
-            label: 'Tratativas Abertas',
-            value: String(tratativas.length),
-            accent: '#EF4444',
-            alert:  true,
-            sub:    '',
-          },
-          {
-            label:     '% Reversão',
-            value:     formatPct(pctReversao, 2),
-            accent:    '#7c3aed',
-            highlight: true,
-            sub:       'QTD REV ÷ (QTD REV + QTD DEV)',
-          },
-        ].map(c => (
-          <div
-            key={c.label}
-            className="bg-white border border-gray-100 rounded-xl p-5"
-            style={{ borderLeftWidth: 4, borderLeftColor: c.accent }}
-          >
-            <p className="text-sm text-gray-500 font-medium mb-1 leading-tight">{c.label}</p>
-            <p className={`text-2xl font-bold ${
-              c.alert     ? 'text-[#EF4444]' :
-              c.highlight ? 'text-[#7c3aed]' :
-              'text-[#003087]'
-            }`}>
-              {c.value}
-            </p>
-            {c.sub && (
-              <p className="text-[10px] text-gray-400 mt-1">{c.sub}</p>
-            )}
-          </div>
-        ))}
+        <div className="bg-white border border-gray-100 rounded-xl p-5" style={{ borderLeftWidth: 4, borderLeftColor: '#F2C800' }}>
+          <p className="text-sm text-gray-500 font-medium mb-1 leading-tight">Total Devolvidos</p>
+          <p className="text-2xl font-bold text-[#003087]">{totalDev.toLocaleString('pt-BR')}</p>
+          <p className="text-[10px] text-gray-400 mt-1">QTD DEV no período</p>
+        </div>
+
+        <div className="bg-white border border-gray-100 rounded-xl p-5" style={{ borderLeftWidth: 4, borderLeftColor: '#10B981' }}>
+          <p className="text-sm text-gray-500 font-medium mb-1 leading-tight">Repasses</p>
+          <p className="text-2xl font-bold text-[#003087]">{totalRepasse.toLocaleString('pt-BR')}</p>
+          <p className="text-[10px] text-gray-400 mt-1">QTD REV — revertidas via repasse</p>
+        </div>
+
+        <div className="bg-white border border-gray-100 rounded-xl p-5" style={{ borderLeftWidth: 4, borderLeftColor: '#EF4444' }}>
+          <p className="text-sm text-gray-500 font-medium mb-1 leading-tight">Sem Reversão</p>
+          <p className="text-2xl font-bold text-[#EF4444]">{qtdSemReversao.toLocaleString('pt-BR')}</p>
+          <p className="text-[10px] text-gray-400 mt-1">motoristas com 0 repasses</p>
+        </div>
+
+        <div className="bg-white border border-gray-100 rounded-xl p-5" style={{ borderLeftWidth: 4, borderLeftColor: '#7c3aed' }}>
+          <p className="text-sm text-gray-500 font-medium mb-1 leading-tight">% Reversão</p>
+          <p className="text-2xl font-bold text-[#7c3aed]">{formatPct(pctReversao, 2)}</p>
+          <p className="text-[10px] text-gray-400 mt-1">QTD REV ÷ (QTD REV + QTD DEV)</p>
+        </div>
       </div>
 
-      {/* Memória de cálculo */}
-      <ReversaoMemoria registros={registros} />
+      {/* Gráficos */}
+      <ReversaoGraficos
+        mensal={dadosMensais}
+        topMotoristas={memoriaData.motorista}
+      />
 
-      {/* Fila de tratativas abertas */}
-      {tratativas.length > 0 && (
-        <div className="bg-white border border-[#EF4444]/20 rounded-xl p-6">
-          <h2 className="font-semibold text-[#003087] mb-4 flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[#EF4444] animate-pulse" />
-            Fila de Tratativas Abertas
-          </h2>
-          <div className="overflow-auto max-h-96">
-            <table className="w-full text-sm table-fixed">
-              <colgroup>
-                <col className="w-24" />
-                <col className="w-40" />
-                <col />
-                <col className="w-32" />
-              </colgroup>
+      {/* Memória de cálculo */}
+      <ReversaoMemoria dados={memoriaData} />
+
+      {/* Motoristas sem nenhum repasse */}
+      {semReversao.length > 0 && (
+        <div className="bg-white border border-gray-100 rounded-xl p-5">
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <p className="text-sm font-semibold text-[#003087]">Motoristas Sem Reversão</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Nenhum repasse registrado no período — ordenado por volume de devoluções
+              </p>
+            </div>
+            <span className="text-xs font-bold text-[#EF4444] bg-[#EF4444]/10 px-2 py-1 rounded-full">
+              {qtdSemReversao} motorista{qtdSemReversao !== 1 ? 's' : ''}
+            </span>
+          </div>
+
+          <div className="overflow-auto max-h-80">
+            <table className="w-full text-sm">
               <thead className="sticky top-0 z-10">
                 <tr className="bg-[#003087] text-white text-xs font-medium">
-                  <th className="text-left py-3 px-2 rounded-tl-lg">Data</th>
-                  <th className="text-left py-3 px-2">Motorista</th>
-                  <th className="text-left py-3 px-2">Cliente</th>
-                  <th className="text-left py-3 px-2 rounded-tr-lg">Motivo</th>
+                  <th className="text-left py-3 px-3 rounded-tl-lg w-8">#</th>
+                  <th className="text-left py-3 px-3">Motorista</th>
+                  <th className="text-right py-3 px-3 w-24">QTD DEV</th>
+                  <th className="text-right py-3 px-3 w-28 rounded-tr-lg">Oportunidades</th>
                 </tr>
               </thead>
               <tbody>
-                {tratativas.map((r, i) => (
-                  <tr key={i} className="border-b border-gray-50 hover:bg-[#FFF8DC]">
-                    <td className="py-2 px-2 text-gray-500 text-xs">
-                      {r.data_rota
-                        ? new Date(r.data_rota + 'T12:00:00').toLocaleDateString('pt-BR')
-                        : '—'}
+                {semReversao.map((r, i) => (
+                  <tr key={r.grupo} className="border-b border-gray-50 hover:bg-[#FFF8DC] transition-colors">
+                    <td className="py-2.5 px-3 text-[#D4A800] font-bold text-xs">{i + 1}</td>
+                    <td className="py-2.5 px-3 text-[#111111] font-medium text-xs max-w-[200px] truncate">
+                      {r.grupo}
                     </td>
-                    <td className="py-2 px-2 text-gray-700 truncate">
-                      {resolveMotorista(motMap, r.motorista)}
+                    <td className="py-2.5 px-3 text-right text-[#EF4444] font-semibold text-xs">
+                      {r.qtd_dev.toLocaleString('pt-BR')}
                     </td>
-                    <td className="py-2 px-2 text-gray-500 max-w-[200px] truncate">
-                      {r.cliente ?? '—'}
+                    <td className="py-2.5 px-3 text-right text-gray-500 text-xs">
+                      {r.total_oportunidades.toLocaleString('pt-BR')}
                     </td>
-                    <td className="py-2 px-2 text-[#D4A800] text-xs">{r.motivo ?? '—'}</td>
                   </tr>
                 ))}
               </tbody>
