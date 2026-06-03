@@ -699,7 +699,79 @@ LANGUAGE sql SECURITY DEFINER AS $$
 $$;
 
 
--- PERMISSÕES
+-- 20. resumo_tendencia_reversao_semanal - reversao semanal para pagina Tendencia
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION resumo_tendencia_reversao_semanal(p_periodo text DEFAULT NULL)
+RETURNS TABLE(semana date, qtd_rev bigint, qtd_dev bigint, pct_reversao numeric)
+LANGUAGE sql SECURITY DEFINER AS $$
+  SELECT
+    date_trunc('week', data_rota::timestamp)::date                            AS semana,
+    SUM(pdv_repasse)::bigint                                                  AS qtd_rev,
+    COUNT(*) FILTER (WHERE pdvs_devolvidos > 0 AND pdv_repasse = 0)::bigint   AS qtd_dev,
+    ROUND(
+      SUM(pdv_repasse)::numeric
+      / NULLIF(
+          SUM(pdv_repasse) + COUNT(*) FILTER (WHERE pdvs_devolvidos > 0 AND pdv_repasse = 0),
+          0
+        ) * 100,
+      2
+    )                                                                         AS pct_reversao
+  FROM public.devolucoes
+  WHERE status_final != 'tratativa_aberta'
+    AND (pdvs_devolvidos > 0 OR pdv_repasse > 0)
+    AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
+  GROUP BY 1
+  ORDER BY 1;
+$$;
+
+
+-- 21. resumo_calor_classificacao_dia - classificacao x dia da semana (heatmap)
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION resumo_calor_classificacao_dia(p_periodo text DEFAULT NULL)
+RETURNS TABLE(classificacao text, dia_semana int, qtd bigint)
+LANGUAGE sql SECURITY DEFINER AS $$
+  SELECT
+    COALESCE(classificacao_motivo, 'Sem classificacao') AS classificacao,
+    EXTRACT(isodow FROM data_rota)::int                 AS dia_semana,
+    SUM(pdvs_devolvidos)::bigint                        AS qtd
+  FROM public.devolucoes
+  WHERE status_final != 'tratativa_aberta'
+    AND motivo IS NOT NULL
+    AND pdvs_devolvidos > 0
+    AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
+  GROUP BY 1, 2
+  ORDER BY 1, 2;
+$$;
+
+
+-- 22. resumo_calor_horario_dia - faixa de horario_finalizacao x dia da semana
+-- horario_finalizacao = hora que a visita encerrou (hora real da devolucao, 100% preenchido)
+-- ----------------------------------------------------------------
+DROP FUNCTION IF EXISTS resumo_calor_horario_dia(text);
+CREATE OR REPLACE FUNCTION resumo_calor_horario_dia(p_periodo text DEFAULT NULL)
+RETURNS TABLE(faixa text, dia_semana int, qtd bigint)
+LANGUAGE sql SECURITY DEFINER AS $$
+  SELECT
+    CASE
+      WHEN horario_finalizacao IS NULL    THEN 'Sem horario'
+      WHEN horario_finalizacao < '09:00'  THEN 'Ate 9h'
+      WHEN horario_finalizacao < '12:00'  THEN '9h - 12h'
+      WHEN horario_finalizacao < '15:00'  THEN '12h - 15h'
+      WHEN horario_finalizacao < '18:00'  THEN '15h - 18h'
+      ELSE                                     '18h ou mais'
+    END                                         AS faixa,
+    EXTRACT(isodow FROM data_rota)::int         AS dia_semana,
+    SUM(pdvs_devolvidos)::bigint                AS qtd
+  FROM public.devolucoes
+  WHERE status_final != 'tratativa_aberta'
+    AND pdvs_devolvidos > 0
+    AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
+  GROUP BY 1, 2
+  ORDER BY 1, 2;
+$$;
+
+
+-- PERMISSOES
 -- ================================================================
 
 GRANT EXECUTE ON FUNCTION periodos_disponiveis()                    TO authenticated, service_role;
@@ -721,3 +793,6 @@ GRANT EXECUTE ON FUNCTION resumo_ofensores_variacao(text)           TO authentic
 GRANT EXECUTE ON FUNCTION resumo_reversoes_mensal(text)             TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION resumo_reversoes_agrupado(text, text)     TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION resumo_reversoes_cruzado(text)            TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_tendencia_reversao_semanal(text)   TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_calor_classificacao_dia(text)      TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_calor_horario_dia(text)            TO authenticated, service_role;

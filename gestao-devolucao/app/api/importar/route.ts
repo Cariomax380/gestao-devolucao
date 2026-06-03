@@ -32,9 +32,15 @@ function isPdvExcluido(codigoRaw: unknown): boolean {
 
 function parseTime(ts: unknown): string | null {
   if (!ts) return null
-  const d = new Date(ts as string)
+  const s = String(ts).trim()
+  // Se já vier como HH:MM ou HH:MM:SS (ex: "14:30:00"), usa direto
+  if (/^\d{2}:\d{2}(:\d{2})?$/.test(s)) return s.slice(0, 5)
+  const d = new Date(s)
   if (isNaN(d.getTime())) return null
-  return d.toTimeString().slice(0, 5)
+  // Usa hora UTC para evitar desvio de fuso no servidor
+  const hh = String(d.getUTCHours()).padStart(2, '0')
+  const mm = String(d.getUTCMinutes()).padStart(2, '0')
+  return `${hh}:${mm}`
 }
 
 function parseDate(ts: unknown): string | null {
