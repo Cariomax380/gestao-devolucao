@@ -43,9 +43,9 @@ export default async function DevolucoesPage({ searchParams }: { searchParams: P
         {[
           { label: 'PDVs Faturados',  value: fat.toLocaleString('pt-BR'),                    cor: 'branco' },
           { label: 'PDVs Devolvidos', value: dev.toLocaleString('pt-BR'),                    cor: 'dourado' },
-          { label: 'Devolução PDV%',  value: formatPct(fat > 0 ? dev/fat*100 : null),       cor: 'dourado' },
+          { label: 'Devolução PDV%',  value: formatPct(fat > 0 ? dev/fat*100 : null, 2),    cor: 'dourado' },
           { label: 'Vol. Dev. HL',    value: formatHL(vdev),                                 cor: 'dourado' },
-          { label: 'Devolução HL%',   value: formatPct(vfat > 0 ? vdev/vfat*100 : null),    cor: 'dourado' },
+          { label: 'Devolução HL%',   value: formatPct(vfat > 0 ? vdev/vfat*100 : null, 2), cor: 'dourado' },
         ].map(c => (
           <div key={c.label} className="bg-[#141414] border border-white/5 rounded-xl p-5">
             <p className="text-gray-500 text-xs uppercase tracking-wider mb-2">{c.label}</p>

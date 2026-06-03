@@ -72,12 +72,12 @@ export default async function DashboardPage({
   const kpis = [
     { label: 'PDVs Faturados',    value: fat.toLocaleString('pt-BR') },
     { label: 'PDVs Devolvidos',   value: dev.toLocaleString('pt-BR') },
-    { label: 'Devolução PDV%',    value: formatPct(pct_dev_pdv)      },
+    { label: 'Devolução PDV%',    value: formatPct(pct_dev_pdv, 2)   },
     { label: 'Vol. Faturado HL',  value: formatHL(vfat)              },
     { label: 'Vol. Devolvido HL', value: formatHL(vdev)              },
-    { label: 'Devolução HL%',     value: formatPct(pct_dev_hl)       },
+    { label: 'Devolução HL%',     value: formatPct(pct_dev_hl, 2)    },
     { label: 'Repasses',          value: rep.toLocaleString('pt-BR') },
-    { label: '% Repasse',         value: formatPct(pct_repasse)      },
+    { label: '% Repasse',         value: formatPct(pct_repasse, 2)   },
   ]
 
   // Vista diária quando período é mês específico (YYYY-MM), mensal nos demais casos

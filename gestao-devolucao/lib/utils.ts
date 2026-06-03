@@ -6,11 +6,11 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function formatPct(value: number | null, decimals = 1): string {
-  if (value === null || isNaN(value)) return '—'
+  if (value === null || isNaN(value) || !isFinite(value)) return '—'
   return `${value.toFixed(decimals)}%`
 }
 
-export function formatHL(value: number | null, decimals = 2): string {
+export function formatHL(value: number | null, decimals = 0): string {
   if (value === null || isNaN(value)) return '—'
   return `${value.toFixed(decimals)} HL`
 }

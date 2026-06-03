@@ -4,6 +4,7 @@ import { Suspense } from 'react'
 import { getMotoristaMap, resolveMotorista } from '@/lib/motoristas'
 import { VariacaoClient } from './VariacaoClient'
 import { FiltroMes } from './FiltroMes'
+import { ErroRPC } from '@/components/layout/ErroRPC'
 
 export default async function VariacaoPage({ searchParams }: { searchParams: Promise<{ periodo?: string }> }) {
   const supabase = await createClient()
@@ -15,14 +16,16 @@ export default async function VariacaoPage({ searchParams }: { searchParams: Pro
   ])
 
   const periodosDisp: string[] = (periodos ?? [])
-    .map((r: any) => r.periodo as string)
-    .filter((p: string) => p?.length === 7)   // apenas YYYY-MM
+    .map((r: { periodo: string }) => r.periodo)
+    .filter((p) => p?.length === 7)   // apenas YYYY-MM
 
   const periodoAtual = (periodo?.length === 7 ? periodo : null) ?? periodosDisp[0] ?? null
 
-  const { data: variacao } = periodoAtual
+  const { data: variacao, error: errVariacao } = periodoAtual
     ? await supabase.rpc('resumo_ofensores_variacao', { p_periodo: periodoAtual })
-    : { data: null }
+    : { data: null, error: null }
+
+  if (errVariacao) return <ErroRPC nome="resumo_ofensores_variacao" />
 
   // Período anterior label
   let periodoAntLabel = '—'
@@ -34,8 +37,8 @@ export default async function VariacaoPage({ searchParams }: { searchParams: Pro
   }
 
   const motoristas = (variacao ?? [])
-    .filter((r: any) => r.motorista && String(r.motorista).trim() !== '')
-    .map((r: any) => ({
+    .filter((r: { motorista?: string | null }) => r.motorista && String(r.motorista).trim() !== '')
+    .map((r: Record<string, unknown>) => ({
       motorista:  String(r.motorista),
       nome:       resolveMotorista(motMap, String(r.motorista)),
       fat_atual:  Number(r.fat_atual),

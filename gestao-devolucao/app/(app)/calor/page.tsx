@@ -3,15 +3,18 @@ import { createClient } from '@/lib/supabase-server'
 import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
 import { Suspense } from 'react'
 import { MapaCalor } from './MapaCalor'
+import { ErroRPC } from '@/components/layout/ErroRPC'
 
 export default async function CalorPage({ searchParams }: { searchParams: Promise<{ periodo?: string }> }) {
   const supabase = await createClient()
   const { periodo } = await searchParams
 
-  const [{ data: calor }, { data: periodos }] = await Promise.all([
+  const [{ data: calor, error: errCalor }, { data: periodos }] = await Promise.all([
     supabase.rpc('resumo_calor_motivo_dia', { p_periodo: periodo ?? null }),
     supabase.rpc('periodos_disponiveis'),
   ])
+
+  if (errCalor) return <ErroRPC nome="resumo_calor_motivo_dia" />
 
   const dados = (calor ?? []).map((r: any) => ({
     motivo: String(r.motivo),

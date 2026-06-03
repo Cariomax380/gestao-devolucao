@@ -6,10 +6,17 @@ import { ClipboardList } from 'lucide-react'
 import { criarAcao, editarAcao } from './actions'
 import type { PlanoAcao } from '@/types'
 
-const INDICADORES = [
-  'devolucao_pdv_pct', 'devolucao_hl_pct', 'reversao_pct',
-  'repasses_apontados_pct', 'repasses_efetivos_pct', 'devolucoes_apontadas_pct',
-  'aderencia_raio_pct', 'devolucao_antes_horario_pct', 'tempo_medio_cme', 'tempo_medio_tratativa',
+const INDICADORES: { value: string; label: string }[] = [
+  { value: 'devolucao_pdv_pct',          label: '% Devolução PDV'              },
+  { value: 'devolucao_hl_pct',           label: '% Devolução HL'               },
+  { value: 'reversao_pct',               label: '% Reversão'                   },
+  { value: 'repasses_apontados_pct',     label: '% Repasses Apontados'         },
+  { value: 'repasses_efetivos_pct',      label: '% Repasses Efetivos'          },
+  { value: 'devolucoes_apontadas_pct',   label: '% Devoluções Apontadas'       },
+  { value: 'aderencia_raio_pct',         label: '% Aderência ao Raio'          },
+  { value: 'devolucao_antes_horario_pct',label: '% Devolução Antes do Horário' },
+  { value: 'tempo_medio_cme',            label: 'Tempo Médio CME'              },
+  { value: 'tempo_medio_tratativa',      label: 'Tempo Médio Tratativa'        },
 ]
 
 interface Props {
@@ -110,7 +117,7 @@ export function AcaoDrawer({ open, onOpenChange, acao }: Props) {
               <label className={labelCls}>Indicador impactado</label>
               <select name="indicador_impactado" defaultValue={acao?.indicador_impactado ?? ''} className={inputCls}>
                 <option value="">Nenhum</option>
-                {INDICADORES.map(i => <option key={i} value={i}>{i}</option>)}
+                {INDICADORES.map(i => <option key={i.value} value={i.value}>{i.label}</option>)}
               </select>
             </div>
 

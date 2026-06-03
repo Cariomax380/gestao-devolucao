@@ -3,15 +3,18 @@ import { createClient } from '@/lib/supabase-server'
 import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
 import { Suspense } from 'react'
 import { GraficoTendencia } from './GraficoTendencia'
+import { ErroRPC } from '@/components/layout/ErroRPC'
 
 export default async function TendenciaPage({ searchParams }: { searchParams: Promise<{ periodo?: string }> }) {
   const supabase = await createClient()
   const { periodo } = await searchParams
 
-  const [{ data: semanas }, { data: periodos }] = await Promise.all([
+  const [{ data: semanas, error: errSemanas }, { data: periodos }] = await Promise.all([
     supabase.rpc('resumo_tendencia_semanal', { p_periodo: periodo ?? null }),
     supabase.rpc('periodos_disponiveis'),
   ])
+
+  if (errSemanas) return <ErroRPC nome="resumo_tendencia_semanal" />
 
   const dados = (semanas ?? []).map((r: any) => ({
     semana: String(r.semana),

@@ -1,6 +1,6 @@
 export type Role = 'admin' | 'coordenador' | 'supervisor' | 'cme' | 'consulta' | 'vendas'
 export type ClassificacaoMotivo = 'Mercado' | 'Logístico' | 'Vendas'
-export type StatusFinal = 'entregue' | 'devolvido' | 'repasse' | 'reversão' | 'tratativa_aberta'
+export type StatusFinal = 'entregue' | 'devolvido' | 'devolvido_parcial' | 'reagendado' | 'tratativa_aberta'
 export type StatusPlano = 'aberto' | 'em_andamento' | 'concluido' | 'cancelado'
 export type PrioridadePlano = 'critica' | 'alta' | 'media' | 'monitoramento'
 

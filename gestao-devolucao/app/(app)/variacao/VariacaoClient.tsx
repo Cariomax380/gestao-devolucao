@@ -169,7 +169,7 @@ export function VariacaoClient({ motoristas, periodoAtual, periodoAntLabel }: Pr
       sub: pctTotal(melhorados.length),
     },
     {
-      label: 'Sem histórico ant.',
+      label: 'Sem mês anterior',
       value: String(novos.length),
       cor: '#9CA3AF',
       sub: '',

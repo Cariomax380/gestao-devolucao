@@ -14,7 +14,7 @@ export default function Loading() {
       {/* KPIs */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[...Array(8)].map((_, i) => (
-          <div key={i} className="bg-[#141414] border border-white/5 rounded-lg px-3 py-3 space-y-2">
+          <div key={i} className="bg-white border border-gray-100 rounded-xl px-3 py-3 space-y-2">
             <Skeleton className="h-3 w-24" />
             <Skeleton className="h-7 w-20" />
           </div>

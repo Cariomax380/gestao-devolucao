@@ -4,33 +4,80 @@ import { formatPct } from '@/lib/utils'
 import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
 import { getMotoristaMap, resolveMotorista } from '@/lib/motoristas'
 import { Suspense } from 'react'
+import { ReversaoMemoria } from './ReversaoMemoria'
+import type { RegistroReversao } from '@/lib/calcular-reversao'
+import { ErroRPC } from '@/components/layout/ErroRPC'
 
-export default async function ReversaoPage({ searchParams }: { searchParams: Promise<{ periodo?: string }> }) {
+export default async function ReversaoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ periodo?: string }>
+}) {
   const supabase = await createClient()
   const { periodo } = await searchParams
 
-  const [{ data: res }, { data: periodos }, motMap] = await Promise.all([
+  // ── Busca paralela: KPIs (RPC) + registros brutos + períodos + motoristas ──
+  // Inclui devolvidos, repasses E tratativas_abertas (pendentes = devolução não revertida)
+  let rawQuery = supabase
+    .from('devolucoes')
+    .select('status_final, pdvs_devolvidos, pdv_repasse, motorista, codigo_pdv, data_rota, motivo, rota')
+    .or('pdvs_devolvidos.gt.0,pdv_repasse.gt.0,status_final.eq.tratativa_aberta')
+
+  if (periodo) rawQuery = rawQuery.like('periodo', `${periodo}%`)
+
+  const [
+    { data: res, error: errRes },
+    { data: periodos },
+    { data: rawRows },
+    motMap,
+  ] = await Promise.all([
     supabase.rpc('resumo_reversoes', { p_periodo: periodo ?? null }),
     supabase.rpc('periodos_disponiveis'),
+    rawQuery,
     getMotoristaMap(),
   ])
 
-  const kpi = res?.[0] ?? {}
-  const totalDev     = Number(kpi.total_dev     ?? 0)
-  const totalRepasse = Number(kpi.total_repasse  ?? 0)
-  const totalRevert  = Number(kpi.total_revert   ?? 0)
-  const pctRepasse   = (totalDev + totalRepasse) > 0
-    ? (totalRepasse / (totalDev + totalRepasse)) * 100
-    : null
-  const pctReversao  = totalDev > 0
-    ? (totalRepasse / totalDev) * 100
+  if (errRes) return <ErroRPC nome="resumo_reversoes" />
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+  const kpi          = res?.[0] ?? {}
+  const totalDev     = Number(kpi.total_dev    ?? 0)
+  const totalRepasse = Number(kpi.total_repasse ?? 0)
+  const totalRevert  = Number(kpi.total_revert  ?? 0)
+
+  interface Tratativa {
+    data_rota: string | null
+    motorista: string | null
+    cliente?:  string | null  // opcional: pode não vir da RPC dependendo da versão
+    motivo:    string | null
+  }
+  const tratativas: Tratativa[] = kpi.tratativas_abertas ?? []
+
+  // % Reversão = QTD REV / (QTD DEV + QTD REV)
+  // QTD DEV = todos os devolvidos + tratativas (independente de reattempt)
+  // QTD REV = SUM(pdv_repasse) — reattempts entregues
+  // Um registro pode contar nos dois lados (devolvido que também teve reattempt)
+  const totalOportunidades = totalDev + totalRepasse
+  const pctReversao = totalOportunidades > 0
+    ? (totalRepasse / totalOportunidades) * 100
     : null
 
-  interface Tratativa { data_rota: string | null; motorista: string | null; cliente: string | null; motivo: string | null }
-  const tratativas: Tratativa[] = kpi.tratativas_abertas ?? []
+  // ── Registros para memória de cálculo ─────────────────────────────────────
+  const registros: RegistroReversao[] = (rawRows ?? []).map(r => ({
+    status_final:    r.status_final ?? null,
+    pdvs_devolvidos: Number(r.pdvs_devolvidos ?? 0),
+    pdv_repasse:     Number(r.pdv_repasse     ?? 0),
+    motorista_nome:  resolveMotorista(motMap, r.motorista),
+    codigo_pdv:      r.codigo_pdv ? String(r.codigo_pdv).trim() : null,
+    data_rota:       r.data_rota ?? null,
+    motivo:          r.motivo    ?? null,
+    rota:            r.rota      ?? null,
+  }))
 
   return (
     <div className="p-6 space-y-6">
+
+      {/* Header */}
       <div className="flex items-start justify-between">
         <div>
           <h1 className="font-semibold text-lg text-[#003087]">Reversões e Repasses</h1>
@@ -41,29 +88,60 @@ export default async function ReversaoPage({ searchParams }: { searchParams: Pro
         <Suspense><FiltroPeriodo periodos={periodos ?? []} /></Suspense>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {[
-          { label: 'Total Devolvidos',   value: totalDev.toLocaleString('pt-BR'),     accent: '#F2C800' },
-          { label: 'Repasses',           value: totalRepasse.toLocaleString('pt-BR'), accent: '#F2C800' },
-          { label: '% Repasse',          value: formatPct(pctRepasse),                accent: '#F2C800' },
-          { label: 'Tratativas Abertas', value: String(tratativas.length),            accent: '#EF4444', alert: true },
-          { label: '% Reversão',         value: formatPct(pctReversao),               accent: '#7c3aed', highlight: true },
+          {
+            label: 'Total Devolvidos',
+            value: totalDev.toLocaleString('pt-BR'),
+            accent: '#F2C800',
+            sub:    'devolvidos não revertidos',
+          },
+          {
+            label: 'Repasses',
+            value: totalRepasse.toLocaleString('pt-BR'),
+            accent: '#F2C800',
+            sub:    'QTD REV — revertidas via repasse',
+          },
+          {
+            label: 'Tratativas Abertas',
+            value: String(tratativas.length),
+            accent: '#EF4444',
+            alert:  true,
+            sub:    '',
+          },
+          {
+            label:     '% Reversão',
+            value:     formatPct(pctReversao, 2),
+            accent:    '#7c3aed',
+            highlight: true,
+            sub:       'QTD REV ÷ (QTD REV + QTD DEV)',
+          },
         ].map(c => (
-          <div key={c.label}
+          <div
+            key={c.label}
             className="bg-white border border-gray-100 rounded-xl p-5"
             style={{ borderLeftWidth: 4, borderLeftColor: c.accent }}
           >
             <p className="text-sm text-gray-500 font-medium mb-1 leading-tight">{c.label}</p>
-            <p className={`text-2xl font-bold ${c.alert ? 'text-[#EF4444]' : c.highlight ? 'text-[#7c3aed]' : 'text-[#003087]'}`}>
+            <p className={`text-2xl font-bold ${
+              c.alert     ? 'text-[#EF4444]' :
+              c.highlight ? 'text-[#7c3aed]' :
+              'text-[#003087]'
+            }`}>
               {c.value}
             </p>
-            {c.highlight && (
-              <p className="text-[10px] text-gray-400 mt-1">repasses ÷ devoluções</p>
+            {c.sub && (
+              <p className="text-[10px] text-gray-400 mt-1">{c.sub}</p>
             )}
           </div>
         ))}
       </div>
 
+      {/* Memória de cálculo */}
+      <ReversaoMemoria registros={registros} />
+
+      {/* Fila de tratativas abertas */}
       {tratativas.length > 0 && (
         <div className="bg-white border border-[#EF4444]/20 rounded-xl p-6">
           <h2 className="font-semibold text-[#003087] mb-4 flex items-center gap-2">
@@ -94,8 +172,12 @@ export default async function ReversaoPage({ searchParams }: { searchParams: Pro
                         ? new Date(r.data_rota + 'T12:00:00').toLocaleDateString('pt-BR')
                         : '—'}
                     </td>
-                    <td className="py-2 px-2 text-gray-700 truncate">{resolveMotorista(motMap, r.motorista)}</td>
-                    <td className="py-2 px-2 text-gray-500 max-w-[200px] truncate">{r.cliente ?? '—'}</td>
+                    <td className="py-2 px-2 text-gray-700 truncate">
+                      {resolveMotorista(motMap, r.motorista)}
+                    </td>
+                    <td className="py-2 px-2 text-gray-500 max-w-[200px] truncate">
+                      {r.cliente ?? '—'}
+                    </td>
                     <td className="py-2 px-2 text-[#D4A800] text-xs">{r.motivo ?? '—'}</td>
                   </tr>
                 ))}

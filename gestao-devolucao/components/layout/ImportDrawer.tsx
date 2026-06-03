@@ -13,7 +13,7 @@ interface ImportDrawerProps {
 type Status = 'idle' | 'loading' | 'success' | 'error'
 type Aba = 'devolucoes' | 'motoristas'
 
-const BATCH_SIZE = 500
+const BATCH_SIZE = 200
 const COLUNAS_OBRIGATORIAS = [
   'distribution_center_id', 'tour_date', 'driver_external_id', 'poc_external_id', 'status',
 ]
@@ -21,11 +21,12 @@ const COLUNAS_OBRIGATORIAS = [
 // ─── Aba Devoluções — parse no client + envio em lotes ───────────────────────
 
 function ImportTabDevolucoes() {
-  const [status,   setStatus]   = useState<Status>('idle')
-  const [arquivo,  setArquivo]  = useState<File | null>(null)
-  const [log,      setLog]      = useState<string[]>([])
-  const [dragging, setDragging] = useState(false)
-  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null)
+  const [status,      setStatus]      = useState<Status>('idle')
+  const [arquivo,     setArquivo]     = useState<File | null>(null)
+  const [log,         setLog]         = useState<string[]>([])
+  const [dragging,    setDragging]    = useState(false)
+  const [progress,    setProgress]    = useState<{ current: number; total: number } | null>(null)
+  const statusAcum = useRef<Record<string, number>>({})
   const inputRef = useRef<HTMLInputElement>(null)
 
   function handleFile(file: File) {
@@ -45,14 +46,47 @@ function ImportTabDevolucoes() {
     setStatus('loading')
     setLog(['Lendo arquivo...'])
     setProgress(null)
+    statusAcum.current = {}
 
     try {
-      // 1. Parse XLSX no browser
-      const XLSX = await import('xlsx')
+      // 1. Parse XLSX em Web Worker (evita travar o thread principal em arquivos grandes)
+      setLog(['Lendo arquivo... aguarde, processando em background'])
       const buffer = await arquivo.arrayBuffer()
-      const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true })
-      const ws = wb.Sheets[wb.SheetNames[0]]
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null })
+      const { rows, headers } = await new Promise<{
+        rows: Record<string, unknown>[]
+        headers: string[]
+      }>((resolve, reject) => {
+        const worker = new Worker('/xlsx-worker.js')
+        const timeout = setTimeout(() => {
+          worker.terminate()
+          reject(new Error('Tempo limite excedido ao processar o arquivo (>90s). Tente um arquivo menor.'))
+        }, 90_000)
+        worker.onmessage = (e) => {
+          clearTimeout(timeout)
+          worker.terminate()
+          if (e.data.success) resolve({ rows: e.data.rows, headers: e.data.headers ?? [] })
+          else reject(new Error(e.data.error))
+        }
+        worker.onerror = (e) => {
+          clearTimeout(timeout)
+          worker.terminate()
+          reject(new Error(e.message || 'Erro ao processar arquivo'))
+        }
+        worker.postMessage({ buffer }, [buffer])
+      })
+
+      // Diagnóstico — verifica se 'reattempt' está entre os headers
+      const temReattempt = headers.includes('reattempt')
+      if (!temReattempt) {
+        const similar = headers.filter(h => h.toLowerCase().includes('reattempt') || h.toLowerCase().includes('reatt'))
+        setLog(prev => [...prev,
+          `⚠ Coluna 'reattempt' não encontrada. Colunas similares: ${similar.join(', ') || 'nenhuma'}`,
+          `Primeiras colunas (1-10): ${headers.slice(0, 10).join(', ')}`,
+          `Coluna 42: ${headers[41] ?? '—'}`,
+        ])
+      } else {
+        setLog(prev => [...prev, `✓ Coluna 'reattempt' encontrada (posição ${headers.indexOf('reattempt') + 1})`])
+      }
 
       if (!rows.length) {
         setStatus('error')
@@ -68,12 +102,35 @@ function ImportTabDevolucoes() {
         return
       }
 
-      // 3. Enviar em lotes
+      // 3. Detectar todos os períodos presentes no arquivo (suporte a consolidado multi-mês)
+      function getPeriodoCliente(val: unknown): string | null {
+        if (!val) return null
+        if (val instanceof Date) {
+          if (isNaN(val.getTime())) return null
+          return `${val.getFullYear()}-${String(val.getMonth() + 1).padStart(2, '0')}`
+        }
+        if (typeof val === 'number') {
+          const d = new Date(Math.round((val - 25569) * 86400 * 1000))
+          return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+        }
+        const d = new Date(val as string)
+        return isNaN(d.getTime()) ? null : `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      }
+
+      const periodosNoArquivo = [
+        ...new Set(rows.map(r => getPeriodoCliente(r.tour_date)).filter(Boolean))
+      ].sort() as string[]
+
+      setLog(prev => [...prev,
+        `Períodos detectados no arquivo: ${periodosNoArquivo.join(', ')}`,
+      ])
+
+      // 4. Enviar em lotes
       const totalBatches = Math.ceil(rows.length / BATCH_SIZE)
       let importacaoId: string | null = null
       let limpeza = 'nenhuma'
 
-      setLog([`${rows.length.toLocaleString('pt-BR')} linhas encontradas. Enviando em ${totalBatches} lote${totalBatches > 1 ? 's' : ''}...`])
+      setLog(prev => [...prev, `${rows.length.toLocaleString('pt-BR')} linhas. Enviando em ${totalBatches} lote${totalBatches > 1 ? 's' : ''}...`])
 
       for (let i = 0; i < rows.length; i += BATCH_SIZE) {
         const batchNum = Math.floor(i / BATCH_SIZE) + 1
@@ -85,33 +142,61 @@ function ImportTabDevolucoes() {
           body: JSON.stringify({
             rows: rows.slice(i, i + BATCH_SIZE),
             meta: {
-              filename:    arquivo.name,
+              filename:         arquivo.name,
               batchNum,
               totalBatches,
-              totalLinhas: rows.length,
+              totalLinhas:      rows.length,
               importacaoId,
+              periodosNoArquivo: batchNum === 1 ? periodosNoArquivo : undefined,
             },
           }),
         })
 
-        const data = await res.json()
+        // Protege contra resposta não-JSON (ex: HTML de erro 502/503)
+        let data: Record<string, unknown>
+        try {
+          data = await res.json()
+        } catch {
+          setStatus('error')
+          setLog(prev => [...prev, `Erro no lote ${batchNum}: resposta inválida do servidor (HTTP ${res.status})`])
+          return
+        }
 
         if (!res.ok || !data.ok) {
           setStatus('error')
-          setLog(prev => [...prev, `Erro no lote ${batchNum}: ${data.error ?? 'Falha desconhecida'}`])
+          setLog(prev => [...prev, `Erro no lote ${batchNum}: ${(data.error as string) ?? 'Falha desconhecida'}`])
           return
+        }
+
+        // Loga erros de insert sem interromper (para diagnóstico)
+        if (data.insertError) {
+          setLog(prev => [...prev, `⚠ ${data.insertError}`])
+        }
+
+        // Acumula statusCount de todos os lotes
+        if (data.statusCount) {
+          for (const [k, v] of Object.entries(data.statusCount as Record<string, number>)) {
+            statusAcum.current[k] = (statusAcum.current[k] ?? 0) + (v as number)
+          }
         }
 
         importacaoId = data.importacaoId
         if (batchNum === 1) limpeza = data.limpeza ?? 'nenhuma'
       }
 
+      const resumoStatus = Object.entries(statusAcum.current)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(' | ')
+
       setStatus('success')
       setProgress(null)
-      setLog([
-        limpeza === 'total'   ? '⚠ CDD diferente — base anterior removida.'         : '',
-        limpeza === 'periodo' ? '⚠ Dados anteriores do período substituídos.'        : '',
+      setLog(prev => [
+        ...prev,
+        limpeza === 'total'   ? '⚠ CDD diferente — base anterior removida.'  : '',
+        limpeza === 'periodo' ? '⚠ Dados anteriores do período substituídos.' : '',
         `✓ ${rows.length.toLocaleString('pt-BR')} linhas importadas com sucesso.`,
+        `Status no arquivo: ${resumoStatus}`,
       ].filter(Boolean))
 
     } catch (err) {

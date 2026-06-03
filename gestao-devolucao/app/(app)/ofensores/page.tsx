@@ -4,8 +4,10 @@ import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
 import { Suspense } from 'react'
 import { getMotoristaMap, resolveMotorista } from '@/lib/motoristas'
 import { OfensoresClient } from './OfensoresClient'
+import { ErroRPC } from '@/components/layout/ErroRPC'
 
 function calcZScores(valores: number[]) {
+  if (valores.length === 0) return { mean: 0, std: 1 }
   const n    = valores.length
   const mean = valores.reduce((s, v) => s + v, 0) / n
   const std  = Math.sqrt(valores.reduce((s, v) => s + (v - mean) ** 2, 0) / n) || 1
@@ -21,7 +23,7 @@ export default async function OfensoresPage({ searchParams }: { searchParams: Pr
   const periodoEfetivo: string | null = periodo ?? (periodos?.[0]?.periodo ?? null)
 
   const [
-    { data: ofensoresRaw },
+    { data: ofensoresRaw, error: errOfensores },
     { data: pdvsForaRaw },
     { data: reincidentesRaw },
     { data: reincAgg },
@@ -33,11 +35,15 @@ export default async function OfensoresPage({ searchParams }: { searchParams: Pr
       .select('motorista, codigo_pdv, cliente, motivo, pdvs_devolvidos')
       .eq('dentro_raio', false)
       .gt('pdvs_devolvidos', 0)
-      .eq('periodo', periodoEfetivo ?? ''),
+      // LIKE para suportar filtro por ano (ex: '2026') e por mês (ex: '2026-05')
+      .like('periodo', periodoEfetivo ? `${periodoEfetivo}%` : '%')
+      .range(0, 9999),
     supabase.rpc('resumo_pdvs_reincidentes', { p_periodo: periodoEfetivo }),
     supabase.rpc('resumo_reincidencia',      { p_periodo: periodoEfetivo }),
     getMotoristaMap(),
   ])
+
+  if (errOfensores) return <ErroRPC nome="resumo_ofensores" />
 
   // ── Loop único sobre pdvsForaRaw: soma devoluções + agrupa por motorista ──
   const sumDevFora:      Record<string, number>   = {}
@@ -73,11 +79,11 @@ export default async function OfensoresPage({ searchParams }: { searchParams: Pr
   // ── Motoristas ────────────────────────────────────────────────────────────
   const motoristas = (ofensoresRaw ?? [])
     .map((r: any) => {
-      const cod     = String(r.motorista ?? '').trim()
-      const nome    = resolveMotorista(motMap, cod)
-      const fat     = Number(r.fat)
-      const dev     = Number(r.dev)
-      const devFora = sumDevFora[cod] ?? 0
+      const cod      = String(r.motorista ?? '').trim()
+      const nome     = resolveMotorista(motMap, cod)
+      const fat      = Number(r.fat)
+      const dev      = Number(r.dev)
+      const devFora = sumDevFora[cod] ?? 0  // devoluções fora do raio
       return {
         motorista: cod,
         nome,
@@ -87,7 +93,7 @@ export default async function OfensoresPage({ searchParams }: { searchParams: Pr
         total:     Number(r.total),
         dev_fora:  devFora,
         pct_dev:   fat > 0 ? dev     / fat * 100 : 0,
-        pct_fora:  fat > 0 ? devFora / fat * 100 : 0,
+        pct_fora:  fat > 0 ? devFora / fat * 100 : 0, // apenas devoluções fora do raio
       }
     })
     .filter((m: any) => m.fat >= 5 && m.nome !== 'Sem motorista' && m.motorista !== '')
@@ -115,7 +121,7 @@ export default async function OfensoresPage({ searchParams }: { searchParams: Pr
     }
   }
 
-  // ── Ranking fora do raio ───────────────────────────────────────────────
+  // ── Ranking fora do raio — apenas devoluções fora do raio ─────────────
   const rankingFora = [...motoristas]
     .filter(m => m.dev_fora > 0)
     .sort((a, b) => b.pct_fora - a.pct_fora)

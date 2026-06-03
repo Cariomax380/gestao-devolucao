@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic'
 import { createClient } from '@/lib/supabase-server'
 import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
+import { ErroRPC } from '@/components/layout/ErroRPC'
 import { Suspense } from 'react'
 
 interface Reincidente { codigo_pdv: string; cliente: string; fat: number; dev: number }
@@ -9,10 +10,12 @@ export default async function ReincidenciaPage({ searchParams }: { searchParams:
   const supabase = await createClient()
   const { periodo } = await searchParams
 
-  const [{ data: res }, { data: periodos }] = await Promise.all([
+  const [{ data: res, error: errRes }, { data: periodos }] = await Promise.all([
     supabase.rpc('resumo_reincidencia', { p_periodo: periodo ?? null }),
     supabase.rpc('periodos_disponiveis'),
   ])
+
+  if (errRes) return <ErroRPC nome="resumo_reincidencia" />
 
   const kpi = res?.[0] ?? null
 
@@ -37,7 +40,7 @@ export default async function ReincidenciaPage({ searchParams }: { searchParams:
           { label: 'Total PDVs',             value: totalPdvs.toLocaleString('pt-BR')     },
           { label: 'Com devolução',          value: comDevolucao.toLocaleString('pt-BR')  },
           { label: 'Reincidentes (>1 dev)',  value: reincidentes.toLocaleString('pt-BR')  },
-          { label: 'Taxa reincidência',      value: `${taxaReincidencia.toFixed(1)}%`      },
+          { label: 'Taxa reincidência',      value: `${taxaReincidencia.toFixed(2)}%`      },
         ].map(c => (
           <div key={c.label} className="bg-white border border-gray-100 border-l-4 border-l-[#F2C800] rounded-xl px-4 py-4">
             <p className="text-sm text-gray-500 font-medium mb-1">{c.label}</p>

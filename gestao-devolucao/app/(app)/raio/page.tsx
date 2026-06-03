@@ -4,18 +4,21 @@ import { formatPct } from '@/lib/utils'
 import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
 import { Suspense } from 'react'
 import { getMotoristaMap, resolveMotorista } from '@/lib/motoristas'
+import { ErroRPC } from '@/components/layout/ErroRPC'
 
 export default async function RaioPage({ searchParams }: { searchParams: Promise<{ periodo?: string }> }) {
   const supabase = await createClient()
   const { periodo } = await searchParams
   const p = periodo ?? null
 
-  const [{ data: ofensores }, { data: periodos }, { data: raioGeral }, motMap] = await Promise.all([
+  const [{ data: ofensores, error: errOfensores }, { data: periodos }, { data: raioGeral, error: errRaio }, motMap] = await Promise.all([
     supabase.rpc('resumo_ofensores', { p_periodo: p }),
     supabase.rpc('periodos_disponiveis'),
     supabase.rpc('resumo_raio', { p_periodo: p }),
     getMotoristaMap(),
   ])
+
+  if (errOfensores || errRaio) return <ErroRPC nome={errRaio ? 'resumo_raio' : 'resumo_ofensores'} />
 
   const motoristas = (ofensores ?? [])
     .map((r: any) => ({
@@ -50,7 +53,7 @@ export default async function RaioPage({ searchParams }: { searchParams: Promise
           { label: 'Total Entregas',     value: totalEntregas.toLocaleString('pt-BR') },
           { label: 'Dentro do Raio',     value: dentroRaio.toLocaleString('pt-BR')   },
           { label: 'Fora do Raio',       value: foraRaio.toLocaleString('pt-BR')     },
-          { label: 'Aderência ao Raio',  value: formatPct(pctAderencia)              },
+          { label: 'Aderência ao Raio',  value: formatPct(pctAderencia, 2)           },
         ].map(c => (
           <div key={c.label} className="bg-white border border-gray-100 border-l-4 border-l-[#F2C800] rounded-xl p-5">
             <p className="text-sm text-gray-500 font-medium mb-1">{c.label}</p>

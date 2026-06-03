@@ -50,9 +50,10 @@ export function PlanoAcaoClient({ acoes }: Props) {
     cancelado:    acoes.filter(a => a.status === 'cancelado'),
   }
 
-  const vencidas = acoes.filter(a =>
-    a.prazo && new Date(a.prazo) < new Date() && a.status !== 'concluido' && a.status !== 'cancelado'
-  )
+  const isVencida = (a: PlanoAcao) =>
+    !!(a.prazo && new Date(a.prazo) < new Date() && a.status !== 'concluido' && a.status !== 'cancelado')
+
+  const vencidas = acoes.filter(isVencida)
 
   const acoesFiltradas = acoes.filter(a => {
     if (filtroStatus     && a.status     !== filtroStatus)     return false
@@ -158,7 +159,7 @@ export function PlanoAcaoClient({ acoes }: Props) {
         {/* Lista de ações */}
         <div className="space-y-3 max-h-[36rem] overflow-y-auto pr-1">
           {acoesFiltradas.map((acao) => {
-            const vencida = acao.prazo && new Date(acao.prazo) < new Date() && acao.status !== 'concluido' && acao.status !== 'cancelado'
+            const vencida = isVencida(acao)
             return (
               <div
                 key={acao.id}

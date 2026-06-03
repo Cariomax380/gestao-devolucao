@@ -1,38 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { createClient as createAdmin } from '@supabase/supabase-js'
-import { getMotoristaMap } from '@/lib/motoristas'
+import { STATUS_MAP, MOTIVO_MAP } from '@/lib/mappings'
+import { gerarPlanoAcao } from '@/lib/acoes'
 
 export const maxDuration = 300
-
-// ─── Mapeamentos (mantidos no servidor por segurança) ────────────────────────
-
-const STATUS_MAP: Record<string, string> = {
-  CONCLUDED:          'entregue',
-  DEFINITELY_RETURNED:'devolvido',
-  PARTIAL_DELIVERY:   'devolvido',
-  RESCHEDULED:        'repasse',
-  NOT_STARTED:        'tratativa_aberta',
-}
-
-const MOTIVO_MAP: Record<string, { label: string; classificacao: string }> = {
-  'closed POS':                            { label: 'PDV fechado',                  classificacao: 'Mercado'   },
-  'No money':                              { label: 'Sem dinheiro',                 classificacao: 'Mercado'   },
-  'Customer did not authorize collection': { label: 'Cliente não autorizou coleta', classificacao: 'Mercado'   },
-  'Did not place an order':                { label: 'Não fez pedido',               classificacao: 'Vendas'    },
-  'Wrong/Duplicate order':                 { label: 'Pedido errado/duplicado',      classificacao: 'Vendas'    },
-  'Payment method':                        { label: 'Forma de pagamento',           classificacao: 'Vendas'    },
-  'Loading error':                         { label: 'Erro de carregamento',         classificacao: 'Logístico' },
-  'Without container':                     { label: 'Sem vasilhame',                classificacao: 'Logístico' },
-  'Delivery time':                         { label: 'Fora do horário',              classificacao: 'Logístico' },
-  'Difficult access':                      { label: 'Acesso difícil',               classificacao: 'Logístico' },
-  'Not enough time':                       { label: 'Sem tempo na rota',            classificacao: 'Logístico' },
-  'Address not found':                     { label: 'Endereço não encontrado',      classificacao: 'Logístico' },
-}
 
 const COLUNAS_OBRIGATORIAS = [
   'distribution_center_id', 'tour_date', 'driver_external_id', 'poc_external_id', 'status',
 ]
+
+// PDVs excluídos da contagem de quantidade (faturados/devolvidos)
+// mas o volume HL deles entra normalmente na somatória de HL
+// Comparação numérica para tolerar zeros à esquerda e tipos diferentes (string/number)
+const PDVS_EXCLUIDOS = new Set([
+  26250, 23390, 17409, 17450, 27865, 27095, 27919, 29243, 28668, 23205,
+  26683, 29214, 19117, 24183, 23407, 22781, 22779, 23948, 24296, 10935,
+  29537, 30389, 31248, 35190, 31953, 35199, 35210, 30392, 30390, 15660,
+  33409, 33651, 34261, 34619, 35200, 35992, 36920, 37662, 37960, 37728,
+  40216, 40217, 40328, 29665, 45630, 45746, 47651, 47652, 47785, 47929,
+  47930, 47933, 47935, 47936, 47940, 49236, 49234, 49239, 49233, 49238,
+  49527,
+])
+
+function isPdvExcluido(codigoRaw: unknown): boolean {
+  const n = Number(String(codigoRaw ?? '').trim())
+  return !isNaN(n) && PDVS_EXCLUIDOS.has(n)
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -68,10 +62,15 @@ function getPeriodo(ts: unknown): string {
 }
 
 function normalizar(r: Record<string, unknown>, importacaoId: string) {
-  const statusRaw  = String(r.status ?? '')
+  const statusRaw  = String(r.status ?? '').toUpperCase().trim()
   const motivoRaw  = String(r.last_reason_waiting_modulation ?? '')
   const motivoInfo = MOTIVO_MAP[motivoRaw]
-  const isDevolvido = statusRaw === 'DEFINITELY_RETURNED' || statusRaw === 'PARTIAL_DELIVERY'
+  const isDevolvido = ['DEVOLVIDO', 'ENTREGA PARCIAL', 'EM TRATAMENTO',
+    'DEFINITELY_RETURNED', 'PARTIAL_DELIVERY', 'IN_TREATMENT'].includes(statusRaw)
+
+  // pdv_repasse vem da coluna 'reattempt' (1 = entregue com repasse na retentativa)
+  // NÃO é o status RESCHEDULED — esse é apenas reagendamento
+  const pdvRepasse = Number(r.reattempt ?? 0) > 0 ? 1 : 0
 
   return {
     importacao_id:    importacaoId,
@@ -86,10 +85,11 @@ function normalizar(r: Record<string, unknown>, importacaoId: string) {
     status_final:     STATUS_MAP[statusRaw] ?? 'tratativa_aberta',
     motivo:           motivoInfo?.label ?? (motivoRaw || null),
     classificacao_motivo: motivoInfo?.classificacao ?? null,
-    pdvs_faturados:   1,
-    pdvs_devolvidos:  isDevolvido ? 1 : 0,
-    pdv_repasse:      statusRaw === 'RESCHEDULED' ? 1 : 0,
-    volume_faturado_hl:  Number(r.volume_hectoliters_sum ?? 0),
+    // PDVs excluídos: não contam em quantidade, mas o HL entra na somatória de volume
+    pdvs_faturados:   isPdvExcluido(r.poc_external_id) ? 0 : 1,
+    pdvs_devolvidos:  isPdvExcluido(r.poc_external_id) ? 0 : (isDevolvido ? 1 : 0),
+    pdv_repasse:      pdvRepasse,
+    volume_faturado_hl:  Number(r.total_delivered_vol ?? 0) + Number(r.total_refused_vol ?? 0),
     volume_devolvido_hl: isDevolvido ? Number(r.total_refused_vol ?? 0) : 0,
     dentro_raio:      Boolean(r.within_radius),
     aderencia_raio:   r.foxtrot_adherence != null ? Number(r.foxtrot_adherence) : null,
@@ -109,11 +109,12 @@ function normalizar(r: Record<string, unknown>, importacaoId: string) {
 // ─── Handler principal ───────────────────────────────────────────────────────
 
 interface BatchMeta {
-  filename:    string
-  batchNum:    number   // 1-indexado
-  totalBatches:number
-  totalLinhas: number   // total de linhas do arquivo completo
-  importacaoId: string | null
+  filename:          string
+  batchNum:          number   // 1-indexado
+  totalBatches:      number
+  totalLinhas:       number   // total de linhas do arquivo completo
+  importacaoId:      string | null
+  periodosNoArquivo?: string[] // todos os períodos detectados no arquivo (suporte a consolidado)
 }
 
 export async function POST(req: NextRequest) {
@@ -129,9 +130,16 @@ export async function POST(req: NextRequest) {
 
   const body: { rows: Record<string, unknown>[]; meta: BatchMeta } = await req.json()
   const { rows, meta } = body
-  const { filename, batchNum, totalBatches, totalLinhas, importacaoId: existingId } = meta
+  const { filename, batchNum, totalBatches, totalLinhas, importacaoId: existingId, periodosNoArquivo } = meta
 
-  if (!rows?.length) return NextResponse.json({ error: 'Lote vazio' }, { status: 400 })
+  // Filtra linhas em branco (Excel costuma incluir linhas vazias no final)
+  const rowsFiltradas = rows.filter(r =>
+    r.distribution_center_id != null && String(r.distribution_center_id).trim() !== '' &&
+    r.tour_date != null &&
+    r.status != null && String(r.status).trim() !== ''
+  )
+
+  if (!rowsFiltradas.length) return NextResponse.json({ ok: true, importacaoId, limpeza: 'nenhuma', insertError: null, statusCount: {} })
 
   const novoCDD    = String(rows[0].distribution_center_id ?? '')
   const novoPeriodo = getPeriodo(rows[0].tour_date)
@@ -150,17 +158,31 @@ export async function POST(req: NextRequest) {
     const { data: impExist } = await supabase.from('importacoes').select('id, cdd, periodo')
 
     if (impExist && impExist.length > 0) {
-      const cddExistente      = impExist[0].cdd
-      const periodoExistente  = impExist.find(i => i.periodo === novoPeriodo && i.cdd === novoCDD)
+      const cddExistente = impExist[0].cdd
 
       if (cddExistente !== novoCDD) {
+        // CDD diferente: limpa tudo
         const ids = impExist.map(i => i.id)
         for (const id of ids) await supabase.from('devolucoes').delete().eq('importacao_id', id)
         await supabase.from('importacoes').delete().in('id', ids)
         limpeza = 'total'
-      } else if (periodoExistente) {
-        await supabase.from('devolucoes').delete().eq('importacao_id', periodoExistente.id)
-        await supabase.from('importacoes').delete().eq('id', periodoExistente.id)
+      } else {
+        // Mesmo CDD: apaga devolucoes diretamente por (cdd, periodo)
+        // Garante limpeza correta mesmo quando imports anteriores eram consolidados
+        // (ex.: import multi-mês registrado com periodo='2026-01' mas contendo dados de 2026-01 a 2026-06)
+        const periodosParaLimpar = periodosNoArquivo?.length ? periodosNoArquivo : [novoPeriodo]
+        await supabase.from('devolucoes').delete().eq('cdd', novoCDD).in('periodo', periodosParaLimpar)
+
+        // Remove importacoes que ficaram sem devolucoes vinculadas (órfãos)
+        const orphans: string[] = []
+        for (const imp of impExist) {
+          const { count } = await supabase
+            .from('devolucoes')
+            .select('id', { count: 'exact', head: true })
+            .eq('importacao_id', imp.id)
+          if ((count ?? 0) === 0) orphans.push(imp.id)
+        }
+        if (orphans.length) await supabase.from('importacoes').delete().in('id', orphans)
         limpeza = 'periodo'
       }
     }
@@ -190,8 +212,15 @@ export async function POST(req: NextRequest) {
   }
 
   // ── Inserir lote normalizado ──────────────────────────────────────────────
-  const pdvs = rows.map(r => normalizar(r, importacaoId!))
+  const pdvs = rowsFiltradas.map(r => normalizar(r, importacaoId!))
   const { error: insertErr } = await supabase.from('devolucoes').insert(pdvs)
+
+  // Contagem de status normalizados para diagnóstico (apenas linhas válidas)
+  const statusCount: Record<string, number> = {}
+  for (const r of rowsFiltradas) {
+    const s = String(r.status ?? '(vazio)').toUpperCase().trim()
+    statusCount[s] = (statusCount[s] ?? 0) + 1
+  }
 
   // ── Último lote: finaliza e gera plano de ação ────────────────────────────
   if (batchNum === totalBatches) {
@@ -203,77 +232,13 @@ export async function POST(req: NextRequest) {
     await gerarPlanoAcao(supabase, importacaoId, novoPeriodo, user.id)
   }
 
-  return NextResponse.json({ ok: true, importacaoId, limpeza })
+  return NextResponse.json({
+    ok: true,
+    importacaoId,
+    limpeza,
+    insertError: insertErr ? `Lote ${batchNum}: ${insertErr.message}` : null,
+    statusCount,
+  })
 }
 
-// ─── Plano de ação automático ─────────────────────────────────────────────────
-
-async function gerarPlanoAcao(supabase: any, importacaoId: string, periodo: string, userId: string) {
-  const [{ data: ofensores }, motMap] = await Promise.all([
-    supabase
-      .from('devolucoes')
-      .select('motorista, pdvs_faturados, pdvs_devolvidos, volume_devolvido_hl')
-      .eq('importacao_id', importacaoId),
-    getMotoristaMap(),
-  ])
-
-  if (!ofensores?.length) return
-
-  const porMotorista: Record<string, { fat: number; dev: number; vol: number }> = {}
-  for (const r of ofensores) {
-    const k = r.motorista
-    if (!k) continue
-    if (!porMotorista[k]) porMotorista[k] = { fat: 0, dev: 0, vol: 0 }
-    porMotorista[k].fat += r.pdvs_faturados ?? 0
-    porMotorista[k].dev += r.pdvs_devolvidos ?? 0
-    porMotorista[k].vol += r.volume_devolvido_hl ?? 0
-  }
-
-  const acoes = []
-
-  for (const [motorista, d] of Object.entries(porMotorista)) {
-    if (d.fat < 5 || !motorista || motorista === 'desconhecido') continue
-    const pct = d.fat > 0 ? (d.dev / d.fat) * 100 : 0
-    const nome = motMap.get(String(motorista).trim()) ?? `cód. ${motorista}`
-
-    if (pct >= 20) {
-      acoes.push({
-        descricao:    `Motorista ${nome} com ${pct.toFixed(1)}% de devolução no período ${periodo} — realizar acompanhamento individual e identificar causa raiz`,
-        responsavel:  'Supervisor',
-        prazo:        new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10),
-        status:       'aberto',
-        prioridade:   'critica',
-        indicador_impactado: 'devolucao_pdv',
-        criado_por:   userId,
-      })
-    } else if (pct >= 10) {
-      acoes.push({
-        descricao:    `Motorista ${nome} com ${pct.toFixed(1)}% de devolução — monitorar nas próximas rotas`,
-        responsavel:  'Coordenador',
-        prazo:        new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
-        status:       'aberto',
-        prioridade:   'alta',
-        indicador_impactado: 'devolucao_pdv',
-        criado_por:   userId,
-      })
-    }
-  }
-
-  const totalFat = Object.values(porMotorista).reduce((s, d) => s + d.fat, 0)
-  const totalDev = Object.values(porMotorista).reduce((s, d) => s + d.dev, 0)
-  const pctGeral = totalFat > 0 ? (totalDev / totalFat) * 100 : 0
-
-  if (pctGeral >= 5) {
-    acoes.push({
-      descricao:    `Taxa geral de devolução em ${pctGeral.toFixed(1)}% no período ${periodo} — revisar processos operacionais`,
-      responsavel:  'Coordenador',
-      prazo:        new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10),
-      status:       'aberto',
-      prioridade:   pctGeral >= 10 ? 'critica' : 'alta',
-      indicador_impactado: 'devolucao_pdv',
-      criado_por:   userId,
-    })
-  }
-
-  if (acoes.length > 0) await supabase.from('plano_acao').insert(acoes)
-}
+// gerarPlanoAcao movida para lib/acoes.ts

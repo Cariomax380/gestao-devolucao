@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS public.devolucoes (
   motorista                 text,
   cliente                   text,
   codigo_pdv                text,
-  status_final              text,
+  status_final              text        CHECK (status_final IN ('entregue','devolvido','devolvido_parcial','reagendado','tratativa_aberta')),
   motivo                    text,
   classificacao_motivo      text,
   pdvs_faturados            integer     DEFAULT 1,
@@ -200,12 +200,12 @@ RETURNS TABLE(
 )
 LANGUAGE sql SECURITY DEFINER AS $$
   SELECT
-    COUNT(*)::bigint,
-    SUM(pdvs_devolvidos)::bigint,
-    SUM(pdv_repasse)::bigint,
+    COALESCE(SUM(pdvs_faturados), 0)::bigint,
+    COALESCE(SUM(pdvs_devolvidos), 0)::bigint,
+    COALESCE(SUM(pdv_repasse), 0)::bigint,
     SUM(volume_faturado_hl),
     SUM(volume_devolvido_hl),
-    SUM(devolucoes_revertidas)::bigint
+    COALESCE(SUM(devolucoes_revertidas), 0)::bigint
   FROM public.devolucoes
   WHERE (p_periodo     IS NULL OR periodo LIKE p_periodo || '%')
     AND (p_data_inicio IS NULL OR data_rota >= p_data_inicio)
@@ -228,9 +228,9 @@ RETURNS TABLE(data_rota date, fat bigint, dev bigint, pct numeric, vol_fat numer
 LANGUAGE sql SECURITY DEFINER AS $$
   SELECT
     data_rota,
-    COUNT(*)::bigint                                                             AS fat,
-    SUM(pdvs_devolvidos)::bigint                                                 AS dev,
-    ROUND(SUM(pdvs_devolvidos)::numeric / NULLIF(COUNT(*),0) * 100, 2)          AS pct,
+    COALESCE(SUM(pdvs_faturados), 0)::bigint                                     AS fat,
+    COALESCE(SUM(pdvs_devolvidos), 0)::bigint                                    AS dev,
+    ROUND(SUM(pdvs_devolvidos)::numeric / NULLIF(SUM(pdvs_faturados),0) * 100, 2) AS pct,
     ROUND(SUM(volume_faturado_hl)::numeric, 2)                                   AS vol_fat,
     ROUND(SUM(volume_devolvido_hl)::numeric, 2)                                  AS vol_dev
   FROM public.devolucoes
@@ -295,9 +295,9 @@ RETURNS TABLE(motorista text, fat bigint, dev bigint, pct numeric, vol_fat numer
 LANGUAGE sql SECURITY DEFINER AS $$
   SELECT
     motorista,
-    COUNT(*)::bigint,
-    SUM(pdvs_devolvidos)::bigint,
-    ROUND(SUM(pdvs_devolvidos)::numeric / NULLIF(COUNT(*),0) * 100, 2),
+    COALESCE(SUM(pdvs_faturados), 0)::bigint,
+    COALESCE(SUM(pdvs_devolvidos), 0)::bigint,
+    ROUND(SUM(pdvs_devolvidos)::numeric / NULLIF(SUM(pdvs_faturados),0) * 100, 2),
     ROUND(SUM(volume_faturado_hl)::numeric, 2),
     ROUND(SUM(volume_devolvido_hl)::numeric, 2),
     ROUND(SUM(volume_devolvido_hl)::numeric / NULLIF(SUM(volume_faturado_hl),0) * 100, 2)
@@ -309,7 +309,7 @@ LANGUAGE sql SECURITY DEFINER AS $$
     AND (p_motorista   IS NULL OR motorista  = p_motorista)
     AND (p_motivo      IS NULL OR motivo     = p_motivo)
   GROUP BY motorista
-  HAVING COUNT(*) >= 5
+  HAVING SUM(pdvs_faturados) >= 5
   ORDER BY 4 DESC;
 $$;
 
@@ -362,12 +362,12 @@ RETURNS TABLE(
 LANGUAGE sql SECURITY DEFINER AS $$
   SELECT
     motorista,
-    COUNT(*)::bigint,
-    SUM(pdvs_devolvidos)::bigint,
+    COALESCE(SUM(pdvs_faturados), 0)::bigint,
+    COALESCE(SUM(pdvs_devolvidos), 0)::bigint,
     SUM(volume_faturado_hl),
     SUM(volume_devolvido_hl),
     COUNT(*) FILTER (WHERE dentro_raio = false)::bigint,
-    COUNT(*)::bigint
+    COALESCE(SUM(pdvs_faturados), 0)::bigint
   FROM public.devolucoes
   WHERE motorista IS NOT NULL
     AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
@@ -441,7 +441,8 @@ LANGUAGE sql SECURITY DEFINER AS $$
     WHERE (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
   )
   SELECT
-    SUM(pdvs_devolvidos)::bigint,
+    -- QTD DEV = todos os devolvidos + tratativa_aberta (independente de reattempt)
+    COUNT(*) FILTER (WHERE status_final IN ('devolvido','devolvido_parcial','tratativa_aberta'))::bigint,
     SUM(pdv_repasse)::bigint,
     SUM(devolucoes_revertidas)::bigint,
     (SELECT jsonb_agg(row_to_json(t) ORDER BY t.data_rota DESC)
@@ -461,9 +462,9 @@ RETURNS TABLE(semana date, fat bigint, dev bigint, pct numeric)
 LANGUAGE sql SECURITY DEFINER AS $$
   SELECT
     date_trunc('week', data_rota::timestamp)::date,
-    COUNT(*)::bigint,
-    SUM(pdvs_devolvidos)::bigint,
-    ROUND(SUM(pdvs_devolvidos)::numeric / NULLIF(COUNT(*),0) * 100, 2)
+    COALESCE(SUM(pdvs_faturados), 0)::bigint,
+    COALESCE(SUM(pdvs_devolvidos), 0)::bigint,
+    ROUND(SUM(pdvs_devolvidos)::numeric / NULLIF(SUM(pdvs_faturados),0) * 100, 2)
   FROM public.devolucoes
   WHERE (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
   GROUP BY 1
@@ -546,16 +547,16 @@ BEGIN
   RETURN QUERY
   WITH atual AS (
     SELECT d.motorista,
-           COUNT(*)::bigint               AS fat,
-           SUM(d.pdvs_devolvidos)::bigint AS dev
+           COALESCE(SUM(d.pdvs_faturados), 0)::bigint AS fat,
+           COALESCE(SUM(d.pdvs_devolvidos), 0)::bigint AS dev
     FROM public.devolucoes d
     WHERE d.periodo LIKE p_periodo || '%'
-    GROUP BY d.motorista HAVING COUNT(*) >= 1
+    GROUP BY d.motorista HAVING SUM(d.pdvs_faturados) >= 1
   ),
   anterior AS (
     SELECT d.motorista,
-           COUNT(*)::bigint               AS fat,
-           SUM(d.pdvs_devolvidos)::bigint AS dev
+           COALESCE(SUM(d.pdvs_faturados), 0)::bigint AS fat,
+           COALESCE(SUM(d.pdvs_devolvidos), 0)::bigint AS dev
     FROM public.devolucoes d
     WHERE d.periodo = v_ant
     GROUP BY d.motorista
