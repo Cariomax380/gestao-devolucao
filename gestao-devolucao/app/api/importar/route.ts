@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
     r.status != null && String(r.status).trim() !== ''
   )
 
-  if (!rowsFiltradas.length) return NextResponse.json({ ok: true, importacaoId, limpeza: 'nenhuma', insertError: null, statusCount: {} })
+  if (!rowsFiltradas.length) return NextResponse.json({ ok: true, importacaoId: existingId, limpeza: 'nenhuma', insertError: null, statusCount: {} })
 
   const novoCDD    = String(rows[0].distribution_center_id ?? '')
   const novoPeriodo = getPeriodo(rows[0].tour_date)

@@ -180,8 +180,8 @@ function ImportTabDevolucoes() {
           }
         }
 
-        importacaoId = data.importacaoId
-        if (batchNum === 1) limpeza = data.limpeza ?? 'nenhuma'
+        importacaoId = data.importacaoId as string
+        if (batchNum === 1) limpeza = (data.limpeza as string) ?? 'nenhuma'
       }
 
       const resumoStatus = Object.entries(statusAcum.current)
