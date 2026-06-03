@@ -447,9 +447,9 @@ LANGUAGE sql SECURITY DEFINER AS $$
     WHERE (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
   )
   SELECT
-    -- QTD DEV = registros com pdvs_devolvidos > 0 (DEFINITELY_RETURNED + PARTIAL_DELIVERY + IN_TREATMENT)
-    -- NOT_STARTED (tratativa_aberta) tem pdvs_devolvidos=0 e NÃO entra aqui
-    COUNT(*) FILTER (WHERE pdvs_devolvidos > 0)::bigint,
+    -- QTD DEV = devolvidos NÃO revertidos (pdvs_devolvidos > 0 AND pdv_repasse = 0)
+    -- Um devolvido com reattempt conta apenas uma vez, como REV, não como DEV
+    COUNT(*) FILTER (WHERE pdvs_devolvidos > 0 AND pdv_repasse = 0)::bigint,
     SUM(pdv_repasse)::bigint,
     SUM(devolucoes_revertidas)::bigint,
     (SELECT jsonb_agg(row_to_json(t) ORDER BY t.data_rota DESC)
@@ -601,10 +601,10 @@ LANGUAGE sql SECURITY DEFINER AS $$
   SELECT
     periodo,
     SUM(pdv_repasse)::bigint AS qtd_rev,
-    COUNT(*) FILTER (WHERE pdvs_devolvidos > 0)::bigint AS qtd_dev,
+    COUNT(*) FILTER (WHERE pdvs_devolvidos > 0 AND pdv_repasse = 0)::bigint AS qtd_dev,
     ROUND(
       SUM(pdv_repasse)::numeric
-      / NULLIF(SUM(pdv_repasse) + COUNT(*) FILTER (WHERE pdvs_devolvidos > 0), 0) * 100, 2
+      / NULLIF(SUM(pdv_repasse) + COUNT(*) FILTER (WHERE pdvs_devolvidos > 0 AND pdv_repasse = 0), 0) * 100, 2
     ) AS pct_reversao
   FROM public.devolucoes
   WHERE status_final != 'tratativa_aberta'
@@ -642,7 +642,7 @@ BEGIN
         ELSE 'Geral'
       END AS grp,
       CASE WHEN d.pdv_repasse > 0 THEN 1 ELSE 0 END AS flag_rev,
-      1 AS flag_dev
+      CASE WHEN d.pdv_repasse = 0 THEN 1 ELSE 0 END AS flag_dev
     FROM devolucoes d
     LEFT JOIN motoristas mot ON mot.codigo = d.motorista
     WHERE
@@ -683,7 +683,7 @@ LANGUAGE sql SECURITY DEFINER AS $$
     COALESCE(TRIM(d.motivo), 'Sem motivo')                               AS motivo,
     COALESCE(mot.nome, 'cód. ' || d.motorista, 'Sem motorista')          AS motorista,
     SUM(d.pdv_repasse)::bigint                                            AS qtd_rev,
-    COUNT(*)::bigint                                                       AS qtd_dev
+    COUNT(*) FILTER (WHERE d.pdv_repasse = 0)::bigint                     AS qtd_dev
   FROM devolucoes d
   LEFT JOIN motoristas mot ON mot.codigo = d.motorista
   WHERE
