@@ -668,6 +668,35 @@ BEGIN
 END;
 $$;
 
+-- ----------------------------------------------------------------
+-- 19. resumo_reversoes_cruzado — motivo × motorista
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION resumo_reversoes_cruzado(p_periodo text DEFAULT NULL)
+RETURNS TABLE(
+  motivo     text,
+  motorista  text,
+  qtd_rev    bigint,
+  qtd_dev    bigint
+)
+LANGUAGE sql SECURITY DEFINER AS $$
+  SELECT
+    COALESCE(TRIM(d.motivo), 'Sem motivo')                               AS motivo,
+    COALESCE(mot.nome, 'cód. ' || d.motorista, 'Sem motorista')          AS motorista,
+    SUM(d.pdv_repasse)::bigint                                            AS qtd_rev,
+    COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                AS qtd_dev
+  FROM devolucoes d
+  LEFT JOIN motoristas mot ON mot.codigo = d.motorista
+  WHERE
+    (p_periodo IS NULL OR d.periodo LIKE p_periodo || '%')
+    AND (d.pdvs_devolvidos > 0 OR d.pdv_repasse > 0)
+  GROUP BY
+    COALESCE(TRIM(d.motivo), 'Sem motivo'),
+    COALESCE(mot.nome, 'cód. ' || d.motorista, 'Sem motorista')
+  HAVING SUM(d.pdv_repasse) + COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0) > 0
+  ORDER BY 1, 4 DESC;
+$$;
+
+
 -- PERMISSÕES
 -- ================================================================
 
@@ -689,3 +718,4 @@ GRANT EXECUTE ON FUNCTION resumo_reincidencia(text)                 TO authentic
 GRANT EXECUTE ON FUNCTION resumo_ofensores_variacao(text)           TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION resumo_reversoes_mensal(text)             TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION resumo_reversoes_agrupado(text, text)     TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_reversoes_cruzado(text)            TO authenticated, service_role;

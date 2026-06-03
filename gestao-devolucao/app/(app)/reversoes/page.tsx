@@ -5,6 +5,7 @@ import { FiltroPeriodo } from '@/components/layout/FiltroPeriodo'
 import { Suspense } from 'react'
 import { ReversaoMemoria } from './ReversaoMemoria'
 import { ReversaoGraficos } from './ReversaoGraficos'
+import { ReversaoMotivo } from './ReversaoMotivo'
 import type { ResultadoReversao, Agrupamento } from '@/lib/calcular-reversao'
 import { ErroRPC } from '@/components/layout/ErroRPC'
 
@@ -46,6 +47,7 @@ export default async function ReversaoPage({
     { data: rowMotivo },
     { data: rowRota },
     { data: rowMensal },
+    { data: rowCruzado },
   ] = await Promise.all([
     supabase.rpc('resumo_reversoes',          { p_periodo: p }),
     supabase.rpc('periodos_disponiveis'),
@@ -56,6 +58,7 @@ export default async function ReversaoPage({
     supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'motivo'    }),
     supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'rota'      }),
     supabase.rpc('resumo_reversoes_mensal',   { p_periodo: p }),
+    supabase.rpc('resumo_reversoes_cruzado',  { p_periodo: p }),
   ])
 
   if (errRes) return <ErroRPC nome="resumo_reversoes" />
@@ -86,6 +89,14 @@ export default async function ReversaoPage({
     qtd_rev:      Number(r.qtd_rev),
     qtd_dev:      Number(r.qtd_dev),
     pct_reversao: Number(r.pct_reversao),
+  }))
+
+  // ── Cruzado motivo × motorista ────────────────────────────────────────────
+  const dadosCruzado = (rowCruzado ?? []).map((r: any) => ({
+    motivo:    String(r.motivo   ?? ''),
+    motorista: String(r.motorista ?? ''),
+    qtd_rev:   Number(r.qtd_rev),
+    qtd_dev:   Number(r.qtd_dev),
   }))
 
   // ── Motoristas sem nenhum repasse no período ───────────────────────────────
@@ -140,6 +151,12 @@ export default async function ReversaoPage({
       <ReversaoGraficos
         mensal={dadosMensais}
         topMotoristas={memoriaData.motorista}
+      />
+
+      {/* Pareto + % reversão por motivo + heatmap motivo × motorista */}
+      <ReversaoMotivo
+        motivos={memoriaData.motivo}
+        cruzado={dadosCruzado}
       />
 
       {/* Memória de cálculo */}
