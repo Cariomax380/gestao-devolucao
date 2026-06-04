@@ -65,7 +65,10 @@ export function PlanoAcaoClient({ acoes }: Props) {
   function abrirEdicao(a: PlanoAcao) { setAcaoEditando(a);  setDrawerOpen(true) }
   function handleExcluir(id: string) {
     if (!confirm('Excluir esta ação?')) return
-    startTransition(async () => { await excluirAcao(id) })
+    startTransition(async () => {
+      const res = await excluirAcao(id)
+      if (res && 'error' in res) alert(`Erro ao excluir: ${res.error}`)
+    })
   }
 
   return (
@@ -233,7 +236,9 @@ export function PlanoAcaoClient({ acoes }: Props) {
         </div>
       </div>
 
+      {/* key força re-mount ao trocar entre editar/novo — sem isso defaultValue fica com dados antigos */}
       <AcaoDrawer
+        key={acaoEditando?.id ?? 'new'}
         open={drawerOpen}
         onOpenChange={setDrawerOpen}
         acao={acaoEditando}

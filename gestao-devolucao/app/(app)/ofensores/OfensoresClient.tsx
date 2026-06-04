@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, Fragment, useTransition } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { TabelaOfensores } from './TabelaOfensores'
 import { ChevronDown, ChevronRight, MapPin } from 'lucide-react'
 import {
@@ -91,7 +91,8 @@ export function OfensoresClient({
   paretoFora, rankingFora, totalFora, maxQtdFora,
   reincidentes, reincKpi, pdvForaInfo, motoristasComPdvFora,
 }: Props) {
-  const router = useRouter()
+  const router      = useRouter()
+  const searchParams = useSearchParams()
   const [, startTransition] = useTransition()
 
   const [tab,             setTab]            = useState<Tab>(initialTab)
@@ -159,8 +160,8 @@ export function OfensoresClient({
             onClick={() => {
               setTab(t.key)
               // Persiste a aba na URL para sobreviver ao remount por mudança de período
-              const p = new URLSearchParams()
-              if (periodoEfetivo) p.set('periodo', periodoEfetivo)
+              // Preserva params atuais da URL (inclui periodo do FiltroPeriodo) e só troca tab
+              const p = new URLSearchParams(searchParams.toString())
               p.set('tab', t.key)
               startTransition(() => router.replace(`/ofensores?${p.toString()}`))
             }}
@@ -215,7 +216,7 @@ export function OfensoresClient({
                     </div>
                     <div className="bg-gray-100 rounded-full h-1.5 overflow-hidden">
                       <div className="h-full rounded-full bg-[#7c3aed]"
-                        style={{ width: `${(qtd / maxQtdFora) * 100}%` }} />
+                        style={{ width: `${(maxQtdFora > 0 ? qtd / maxQtdFora : 0) * 100}%` }} />
                     </div>
                   </div>
                 ))}

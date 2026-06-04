@@ -148,8 +148,9 @@ export async function POST(req: NextRequest) {
 
   if (!rowsFiltradas.length) return NextResponse.json({ ok: true, importacaoId: existingId, limpeza: 'nenhuma', insertError: null, statusCount: {} })
 
-  const novoCDD    = String(rows[0].distribution_center_id ?? '')
-  const novoPeriodo = getPeriodo(rows[0].tour_date)
+  // Usa a primeira linha válida (não a raw rows[0] que pode ser em branco)
+  const novoCDD    = String(rowsFiltradas[0].distribution_center_id ?? '')
+  const novoPeriodo = getPeriodo(rowsFiltradas[0].tour_date)
 
   let importacaoId = existingId
   let limpeza = 'nenhuma'
@@ -162,7 +163,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: `Colunas ausentes: ${ausentes.join(', ')}` }, { status: 400 })
     }
 
-    const { data: impExist } = await supabase.from('importacoes').select('id, cdd, periodo')
+    const { data: impExist } = await supabase.from('importacoes').select('id, cdd, periodo').eq('user_id', user.id)
 
     if (impExist && impExist.length > 0) {
       const cddExistente = impExist[0].cdd
@@ -236,7 +237,8 @@ export async function POST(req: NextRequest) {
       .update({ status: insertErr ? 'parcial' : 'concluido' })
       .eq('id', importacaoId)
 
-    await gerarPlanoAcao(supabase, importacaoId, novoPeriodo, user.id)
+    // Só gera plano se a inserção foi completa — dados parciais geram metas erradas
+    if (!insertErr) await gerarPlanoAcao(supabase, importacaoId, novoPeriodo, user.id)
   }
 
   return NextResponse.json({

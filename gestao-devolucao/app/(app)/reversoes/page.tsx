@@ -38,16 +38,16 @@ export default async function ReversaoPage({
   const p = periodo ?? null
 
   const [
-    { data: res, error: errRes },
-    { data: periodos },
-    { data: rowGeral },
-    { data: rowMotorista },
-    { data: rowPdv },
-    { data: rowData },
-    { data: rowMotivo },
-    { data: rowRota },
-    { data: rowMensal },
-    { data: rowCruzado },
+    { data: res,         error: errRes     },
+    { data: periodos                       },
+    { data: rowGeral,    error: errGeral   },
+    { data: rowMotorista                   },
+    { data: rowPdv                         },
+    { data: rowData                        },
+    { data: rowMotivo                      },
+    { data: rowRota                        },
+    { data: rowMensal,   error: errMensal  },
+    { data: rowCruzado,  error: errCruzado },
   ] = await Promise.all([
     supabase.rpc('resumo_reversoes',          { p_periodo: p }),
     supabase.rpc('periodos_disponiveis'),
@@ -61,7 +61,10 @@ export default async function ReversaoPage({
     supabase.rpc('resumo_reversoes_cruzado',  { p_periodo: p }),
   ])
 
-  if (errRes) return <ErroRPC nome="resumo_reversoes" />
+  if (errRes)    return <ErroRPC nome="resumo_reversoes" />
+  if (errGeral)  return <ErroRPC nome="resumo_reversoes_agrupado" />
+  if (errMensal) return <ErroRPC nome="resumo_reversoes_mensal" />
+  if (errCruzado) return <ErroRPC nome="resumo_reversoes_cruzado" />
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const kpi          = res?.[0] ?? {}

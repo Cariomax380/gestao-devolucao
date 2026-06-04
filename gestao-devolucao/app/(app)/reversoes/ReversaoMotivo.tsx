@@ -130,8 +130,9 @@ export function ReversaoMotivo({ motivos, cruzado }: Props) {
     })
   }
 
-  const maxRev = Math.max(...cruzado.map(r => r.qtd_rev), 1)
-  const maxDev = Math.max(...cruzado.map(r => r.qtd_dev), 1)
+  // reduce em vez de spread — evita RangeError em arrays grandes (>100k linhas)
+  const maxRev = cruzado.reduce((m, r) => Math.max(m, r.qtd_rev), 1)
+  const maxDev = cruzado.reduce((m, r) => Math.max(m, r.qtd_dev), 1)
 
   const motivosHeat = motivos.slice().sort((a, b) => b.total_oportunidades - a.total_oportunidades)
 

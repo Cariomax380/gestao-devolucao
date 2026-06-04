@@ -4,6 +4,7 @@ import { formatPct, formatHL } from '@/lib/utils'
 import { getMotoristaMap } from '@/lib/motoristas'
 import { FiltrosDashboard } from './FiltrosDashboard'
 import { GraficosTabs } from './GraficosTabs'
+import { ErroRPC } from '@/components/layout/ErroRPC'
 import { Suspense } from 'react'
 
 function clsColor(cls: string) {
@@ -37,8 +38,8 @@ export default async function DashboardPage({
   }
 
   const [
-    { data: resumo },
-    { data: porData },
+    { data: resumo,       error: errResumo },
+    { data: porData,      error: errData   },
     { data: porMotivo },
     { data: porMotorista },
     { data: porCls },
@@ -57,6 +58,9 @@ export default async function DashboardPage({
     supabase.rpc('motivos_disponiveis'),
     getMotoristaMap(),
   ])
+
+  if (errResumo) return <ErroRPC nome="resumo_dashboard_filtrado" />
+  if (errData)   return <ErroRPC nome="resumo_por_data_filtrado" />
 
   const t    = resumo?.[0] ?? {}
   const fat  = Number(t.pdvs_faturados  ?? 0)

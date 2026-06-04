@@ -60,7 +60,7 @@ export default async function OfensoresPage({ searchParams }: { searchParams: Pr
     if (!pdvsPorMotorista[cod]) pdvsPorMotorista[cod] = []
     const ex = pdvsPorMotorista[cod].find(p => p.codigo_pdv === r.codigo_pdv)
     if (ex) {
-      ex.qtd++
+      ex.qtd += Number(r.pdvs_devolvidos ?? 1)
       if (!ex.motivo && r.motivo) ex.motivo = r.motivo
     } else {
       pdvsPorMotorista[cod].push({

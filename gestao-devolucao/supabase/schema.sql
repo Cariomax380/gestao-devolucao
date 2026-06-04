@@ -608,7 +608,7 @@ LANGUAGE sql SECURITY DEFINER AS $$
     ) AS pct_reversao
   FROM public.devolucoes
   WHERE status_final != 'tratativa_aberta'
-    AND (p_periodo IS NULL OR periodo LIKE SUBSTRING(p_periodo, 1, 4) || '%')
+    AND (p_periodo IS NULL OR periodo LIKE p_periodo || '%')
   GROUP BY periodo
   ORDER BY periodo;
 $$;

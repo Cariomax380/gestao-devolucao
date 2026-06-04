@@ -6,7 +6,9 @@ self.onmessage = function (e) {
   const { buffer } = e.data;
   try {
     const wb = XLSX.read(buffer, { type: 'buffer', cellDates: true });
+    if (!wb.SheetNames.length) throw new Error('Arquivo sem planilhas válidas');
     const ws = wb.Sheets[wb.SheetNames[0]];
+    if (!ws) throw new Error('Planilha não encontrada no arquivo');
     const rows = XLSX.utils.sheet_to_json(ws, { defval: null });
 
     // Diagnóstico: informa os headers da primeira linha para verificar nomes de colunas

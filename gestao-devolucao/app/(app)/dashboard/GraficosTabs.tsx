@@ -226,7 +226,7 @@ export function GraficosTabs({ diarios, motivos, motoristas, classificacoes, tot
               </div>
               {/* Linhas */}
               {motoristas.map((m, i) => (
-                <div key={m.nome}
+                <div key={`${i}-${m.nome}`}
                   className="grid gap-2 py-2 border-b border-gray-50 hover:bg-[#FFF8DC] items-center"
                   style={{ gridTemplateColumns: '1fr 120px 120px 48px 52px' }}>
                   {/* Nome */}
