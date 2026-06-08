@@ -1,10 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { checkRateLimit } from '@/lib/rate-limit'
 
 export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
+
+  // 5 análises por minuto por usuário (evita abuso da API Anthropic)
+  const rl = checkRateLimit(`analisar:${user.id}`, 5, 60_000)
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { error: `Limite atingido. Tente novamente em ${Math.ceil(rl.resetMs / 1000)} segundo(s).` },
+      {
+        status: 429,
+        headers: {
+          'Retry-After':          String(Math.ceil(rl.resetMs / 1000)),
+          'X-RateLimit-Limit':    '5',
+          'X-RateLimit-Remaining': '0',
+          'X-RateLimit-Reset':    String(Date.now() + rl.resetMs),
+        },
+      },
+    )
+  }
 
   const body = await req.json().catch(() => ({}))
   const periodo: string | null = body.periodo ?? null

@@ -16,6 +16,7 @@ export async function criarAcao(formData: FormData) {
     indicador_impactado: formData.get('indicador_impactado') as string || null,
     comentarios:         formData.get('comentarios') as string || null,
     criado_por:          user?.email ?? null,
+    user_id:             user?.id ?? null,
   })
 
   if (error) return { error: error.message }

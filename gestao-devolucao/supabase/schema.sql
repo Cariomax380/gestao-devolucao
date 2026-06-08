@@ -23,9 +23,12 @@ CREATE TABLE IF NOT EXISTS public.importacoes (
 );
 
 ALTER TABLE public.importacoes ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "auth_all" ON public.importacoes;
-CREATE POLICY "auth_all" ON public.importacoes
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "auth_all"    ON public.importacoes;
+DROP POLICY IF EXISTS "owner_only"  ON public.importacoes;
+CREATE POLICY "owner_only" ON public.importacoes
+  FOR ALL TO authenticated
+  USING     (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.importacoes TO authenticated, service_role;
 
 
@@ -75,9 +78,20 @@ CREATE TABLE IF NOT EXISTS public.devolucoes (
 );
 
 ALTER TABLE public.devolucoes ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "auth_all" ON public.devolucoes;
-CREATE POLICY "auth_all" ON public.devolucoes
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "auth_all"    ON public.devolucoes;
+DROP POLICY IF EXISTS "owner_only"  ON public.devolucoes;
+CREATE POLICY "owner_only" ON public.devolucoes
+  FOR ALL TO authenticated
+  USING (
+    importacao_id IN (
+      SELECT id FROM public.importacoes WHERE user_id = auth.uid()
+    )
+  )
+  WITH CHECK (
+    importacao_id IN (
+      SELECT id FROM public.importacoes WHERE user_id = auth.uid()
+    )
+  );
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.devolucoes TO authenticated, service_role;
 
 
@@ -127,14 +141,19 @@ CREATE TABLE IF NOT EXISTS public.plano_acao (
   indicador_impactado text,
   comentarios         text,
   criado_por          text,
+  -- user_id separa propriedade (UUID) de exibição (criado_por = email/texto)
+  user_id             uuid,
   criado_em           timestamptz DEFAULT now(),
   atualizado_em       timestamptz
 );
 
 ALTER TABLE public.plano_acao ENABLE ROW LEVEL SECURITY;
-DROP POLICY IF EXISTS "auth_all" ON public.plano_acao;
-CREATE POLICY "auth_all" ON public.plano_acao
-  FOR ALL TO authenticated USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS "auth_all"    ON public.plano_acao;
+DROP POLICY IF EXISTS "owner_only"  ON public.plano_acao;
+CREATE POLICY "owner_only" ON public.plano_acao
+  FOR ALL TO authenticated
+  USING     (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.plano_acao TO authenticated, service_role;
 
 
@@ -642,7 +661,7 @@ BEGIN
         ELSE 'Geral'
       END AS grp,
       CASE WHEN d.pdv_repasse > 0 THEN 1 ELSE 0 END AS flag_rev,
-      CASE WHEN d.pdv_repasse = 0 THEN 1 ELSE 0 END AS flag_dev
+      CASE WHEN d.pdv_repasse = 0 AND d.pdvs_devolvidos > 0 THEN 1 ELSE 0 END AS flag_dev
     FROM devolucoes d
     LEFT JOIN motoristas mot ON mot.codigo = d.motorista
     WHERE
@@ -685,7 +704,7 @@ LANGUAGE sql SECURITY DEFINER AS $$
     COALESCE(TRIM(d.motivo), 'Sem motivo')                               AS motivo,
     COALESCE(mot.nome, 'cód. ' || d.motorista, 'Sem motorista')          AS motorista,
     SUM(d.pdv_repasse)::bigint                                            AS qtd_rev,
-    COUNT(*) FILTER (WHERE d.pdv_repasse = 0)::bigint                     AS qtd_dev
+    COUNT(*) FILTER (WHERE d.pdv_repasse = 0 AND d.pdvs_devolvidos > 0)::bigint AS qtd_dev
   FROM devolucoes d
   LEFT JOIN motoristas mot ON mot.codigo = d.motorista
   WHERE
@@ -1014,7 +1033,7 @@ BEGIN
     SELECT
       d.data_rota,
       CASE WHEN d.pdv_repasse > 0 THEN 1 ELSE 0 END AS flag_rev,
-      CASE WHEN d.pdv_repasse = 0 THEN 1 ELSE 0 END AS flag_dev
+      CASE WHEN d.pdv_repasse = 0 AND d.pdvs_devolvidos > 0 THEN 1 ELSE 0 END AS flag_dev
     FROM devolucoes d
     WHERE (p_periodo IS NULL OR d.periodo LIKE p_periodo || '%')
       AND d.status_final != 'tratativa_aberta'

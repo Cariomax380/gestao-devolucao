@@ -48,6 +48,7 @@ export async function gerarPlanoAcao(
         prioridade:          'critica',
         indicador_impactado: 'devolucao_pdv',
         criado_por:          userId,
+        user_id:             userId,
       })
     } else if (pct >= 10) {
       acoes.push({
@@ -58,6 +59,7 @@ export async function gerarPlanoAcao(
         prioridade:          'alta',
         indicador_impactado: 'devolucao_pdv',
         criado_por:          userId,
+        user_id:             userId,
       })
     }
   }
@@ -75,6 +77,7 @@ export async function gerarPlanoAcao(
       prioridade:          pctGeral >= 10 ? 'critica' : 'alta',
       indicador_impactado: 'devolucao_pdv',
       criado_por:          userId,
+      user_id:             userId,
     })
   }
 

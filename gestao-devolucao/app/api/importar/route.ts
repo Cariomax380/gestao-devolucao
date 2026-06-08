@@ -59,12 +59,14 @@ function getPeriodo(ts: unknown): string {
   if (!ts) return ''
   if (typeof ts === 'number') {
     const d = new Date(Math.round((ts - 25569) * 86400 * 1000))
+    // Serial Excel → UTC puro; usa getUTC* para consistência com parseDate
     if (!isNaN(d.getTime()))
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
   }
   const d = new Date(ts as string)
   if (isNaN(d.getTime())) return ''
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  // Usa UTC para não divergir de parseDate (que usa toISOString = UTC)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
 }
 
 function normalizar(r: Record<string, unknown>, importacaoId: string) {
@@ -143,12 +145,45 @@ export async function POST(req: NextRequest) {
     { auth: { autoRefreshToken: false, persistSession: false } }
   )
 
-  const body: { rows: Record<string, unknown>[]; meta: BatchMeta } = await req.json()
-  const { rows, meta } = body
-  const { filename, batchNum, totalBatches, totalLinhas, importacaoId: existingId, periodosNoArquivo } = meta
+  // ── Validação de body ────────────────────────────────────────────────────────
+  let body: { rows: Record<string, unknown>[]; meta: BatchMeta }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Body inválido: JSON malformado' }, { status: 400 })
+  }
+
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ error: 'Body inválido: objeto esperado' }, { status: 400 })
+  }
+
+  const { rows, meta } = body as { rows: unknown; meta: unknown }
+
+  if (!Array.isArray(rows)) {
+    return NextResponse.json({ error: 'Body inválido: "rows" deve ser um array' }, { status: 400 })
+  }
+
+  if (
+    !meta || typeof meta !== 'object' ||
+    typeof (meta as Record<string, unknown>).filename      !== 'string' ||
+    typeof (meta as Record<string, unknown>).batchNum      !== 'number' ||
+    typeof (meta as Record<string, unknown>).totalBatches  !== 'number' ||
+    typeof (meta as Record<string, unknown>).totalLinhas   !== 'number' ||
+    !((meta as Record<string, unknown>).importacaoId === null ||
+      typeof (meta as Record<string, unknown>).importacaoId === 'string')
+  ) {
+    return NextResponse.json(
+      { error: 'Body inválido: "meta" com campos ausentes ou tipo incorreto (filename, batchNum, totalBatches, totalLinhas, importacaoId)' },
+      { status: 400 },
+    )
+  }
+
+  const typedMeta = meta as BatchMeta
+  const { filename, batchNum, totalBatches, totalLinhas, importacaoId: existingId, periodosNoArquivo } = typedMeta
+  const typedRows = rows as Record<string, unknown>[]
 
   // Filtra linhas em branco (Excel costuma incluir linhas vazias no final)
-  const rowsFiltradas = rows.filter(r =>
+  const rowsFiltradas = typedRows.filter(r =>
     r.distribution_center_id != null && String(r.distribution_center_id).trim() !== '' &&
     r.tour_date != null &&
     r.status != null && String(r.status).trim() !== ''
@@ -156,7 +191,7 @@ export async function POST(req: NextRequest) {
 
   if (!rowsFiltradas.length) return NextResponse.json({ ok: true, importacaoId: existingId, limpeza: 'nenhuma', insertError: null, statusCount: {} })
 
-  // Usa a primeira linha válida (não a raw rows[0] que pode ser em branco)
+  // Usa a primeira linha válida (não a raw typedRows[0] que pode ser em branco)
   const novoCDD    = String(rowsFiltradas[0].distribution_center_id ?? '')
   const novoPeriodo = getPeriodo(rowsFiltradas[0].tour_date)
 
@@ -165,7 +200,7 @@ export async function POST(req: NextRequest) {
 
   // ── Primeiro lote: valida colunas + limpeza + cria registro de importação ──
   if (batchNum === 1) {
-    const colunas = Object.keys(rows[0])
+    const colunas = Object.keys(typedRows[0] ?? {})
     const ausentes = COLUNAS_OBRIGATORIAS.filter(c => !colunas.includes(c))
     if (ausentes.length) {
       return NextResponse.json({ error: `Colunas ausentes: ${ausentes.join(', ')}` }, { status: 400 })
