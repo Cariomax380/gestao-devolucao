@@ -78,9 +78,14 @@ function normalizar(r: Record<string, unknown>, importacaoId: string) {
     'DEFINITELY_RETURNED', 'PARTIAL_DELIVERY', 'IN_TREATMENT',
     'WAITING_MODULATION'].includes(statusRaw)
 
-  // pdv_repasse vem da coluna 'reattempt' (1 = entregue com repasse na retentativa)
-  // NÃO é o status RESCHEDULED — esse é apenas reagendamento
-  const pdvRepasse = Number(r.reattempt ?? 0) > 0 ? 1 : 0
+  // pdv_repasse = 1 SOMENTE quando reattempt=1 E a retentativa foi bem-sucedida.
+  // DEFINITELY_RETURNED + reattempt=1 = retentativa falha → ainda é devolução (DEV).
+  // NÃO é o status RESCHEDULED — esse é apenas reagendamento.
+  const pdvRepasse = Number(r.reattempt ?? 0) > 0 && !isDevolvido ? 1 : 0
+
+  // pdvDevolvido = 1 quando o status é de devolução.
+  // Como pdvRepasse já é 0 para qualquer status de devolução, a condição simplifica.
+  const pdvDevolvido = isDevolvido ? 1 : 0
 
   return {
     importacao_id:    importacaoId,
@@ -97,10 +102,10 @@ function normalizar(r: Record<string, unknown>, importacaoId: string) {
     classificacao_motivo: motivoInfo?.classificacao ?? null,
     // pdvs_faturados: contado pelo código do PDV, exceto os explicitamente excluídos
     pdvs_faturados:   isPdvExcluido(r.poc_external_id) ? 0 : 1,
-    pdvs_devolvidos:  isPdvExcluido(r.poc_external_id) ? 0 : (isDevolvido ? 1 : 0),
+    pdvs_devolvidos:  isPdvExcluido(r.poc_external_id) ? 0 : pdvDevolvido,
     pdv_repasse:      pdvRepasse,
     volume_faturado_hl:  Number(r.total_delivered_vol ?? 0) + Number(r.total_refused_vol ?? 0),
-    volume_devolvido_hl: isDevolvido ? Number(r.total_refused_vol ?? 0) : 0,
+    volume_devolvido_hl: pdvDevolvido ? Number(r.total_refused_vol ?? 0) : 0,
     dentro_raio:      Boolean(r.within_radius),
     aderencia_raio:   r.foxtrot_adherence != null ? Number(r.foxtrot_adherence) : null,
     horario_apontamento:     parseTime(r.arrived_at),

@@ -167,10 +167,10 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
   const desvioGeral  = geral[0]?.desvio_prev ?? 0
   const gatilhoGeral = mediaGeral + sigma * desvioGeral
 
-  // Gatilho numérico independente para Dev. Total — arredondado para cima
+  // Gatilho numérico independente para Dev. Total
   const mediaTotal   = total[0]?.media_prev   ?? 0
   const desvioTotal  = total[0]?.desvio_prev  ?? 0
-  const gatilhoTotal = Math.ceil(mediaTotal + sigma * desvioTotal)
+  const gatilhoTotal = mediaTotal + sigma * desvioTotal
 
   // Gatilho numérico independente para PDV Fechado — arredondado para cima
   const mediaFechado   = fechado[0]?.media_prev   ?? 0
@@ -350,7 +350,7 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
             σ: <strong className="text-[#D4A800]">{desvioN.toFixed(1)} dev</strong>
           </span>
           <span className="text-gray-600">
-            Gatilho ({sigma}σ): <strong className="text-red-500">{gatilhoNum} dev/dia</strong>
+            Gatilho ({sigma}σ): <strong className="text-red-500">{Number.isInteger(gatilhoNum) ? gatilhoNum : gatilhoNum.toFixed(2)} dev/dia</strong>
           </span>
           <span className="text-gray-400 text-xs self-center">Referência: {periodoRef}</span>
         </div>
@@ -547,7 +547,7 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
         />
         <KpiCard
           label="Gatilho Dev. Total"
-          value={`${gatilhoTotal} dev/dia`}
+          value={`${gatilhoTotal.toFixed(2)} dev/dia`}
           sub={`${totalEventos} evento(s) de estouro`}
           alerta={totalEventos > 0}
         />
