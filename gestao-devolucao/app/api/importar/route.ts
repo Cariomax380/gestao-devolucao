@@ -224,15 +224,16 @@ export async function POST(req: NextRequest) {
         const periodosParaLimpar = periodosNoArquivo?.length ? periodosNoArquivo : [novoPeriodo]
         await supabase.from('devolucoes').delete().eq('cdd', novoCDD).in('periodo', periodosParaLimpar)
 
-        // Remove importacoes que ficaram sem devolucoes vinculadas (órfãos)
-        const orphans: string[] = []
-        for (const imp of impExist) {
-          const { count } = await supabase
-            .from('devolucoes')
-            .select('id', { count: 'exact', head: true })
-            .eq('importacao_id', imp.id)
-          if ((count ?? 0) === 0) orphans.push(imp.id)
-        }
+        // Remove importacoes que ficaram sem devolucoes vinculadas (órfãos).
+        // Uma única query busca todos os importacao_ids que ainda têm linhas,
+        // evitando o loop N+1 anterior.
+        const importIds = impExist.map(i => i.id)
+        const { data: comDev } = await supabase
+          .from('devolucoes')
+          .select('importacao_id')
+          .in('importacao_id', importIds)
+        const idsComDev = new Set((comDev ?? []).map((r: { importacao_id: string }) => r.importacao_id))
+        const orphans   = importIds.filter(id => !idsComDev.has(id))
         if (orphans.length) await supabase.from('importacoes').delete().in('id', orphans)
         limpeza = 'periodo'
       }

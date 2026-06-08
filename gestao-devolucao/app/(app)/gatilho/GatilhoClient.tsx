@@ -108,8 +108,12 @@ function TopOfensores({ dados, gatilhoNum }: { dados: GatilhoMotorista[]; gatilh
       if (!ex) {
         mapa.set(m.motorista, { motorista: m.motorista, nome: m.nome_motorista, dias: 1, piorDia: m.devs_dia, dataPior: m.data_rota })
       } else {
-        ex.dias++
-        if (m.devs_dia > ex.piorDia) { ex.piorDia = m.devs_dia; ex.dataPior = m.data_rota }
+        mapa.set(m.motorista, {
+          ...ex,
+          dias:     ex.dias + 1,
+          piorDia:  m.devs_dia > ex.piorDia ? m.devs_dia  : ex.piorDia,
+          dataPior: m.devs_dia > ex.piorDia ? m.data_rota : ex.dataPior,
+        })
       }
     }
     return [...mapa.values()].sort((a, b) => b.dias - a.dias || b.piorDia - a.piorDia).slice(0, 5)
@@ -141,6 +145,197 @@ function TopOfensores({ dados, gatilhoNum }: { dados: GatilhoMotorista[]; gatilh
           </li>
         ))}
       </ol>
+    </div>
+  )
+}
+
+// ── TabMotoristas ─────────────────────────────────────────────────────────────
+interface TabMotoristaProps {
+  dados:       GatilhoMotorista[]
+  filtrados:   GatilhoMotorista[]
+  quase:       string[]
+  gatilhoNum:  number
+  mediaN:      number
+  desvioN:     number
+  sigma:       number
+  periodoRef:  string
+  busca:       string
+  soEstouro:   boolean
+  onBusca:     (v: string) => void
+  onSoEstouro: (v: boolean) => void
+}
+
+function TabMotoristas({
+  dados, filtrados, quase,
+  gatilhoNum, mediaN, desvioN,
+  sigma, periodoRef, busca, soEstouro,
+  onBusca, onSoEstouro,
+}: TabMotoristaProps) {
+  const estouros       = dados.filter(m => m.devs_dia > gatilhoNum)
+  const motoristasUniq = new Set(estouros.map(m => m.motorista)).size
+  const diasUniq       = new Set(estouros.map(m => m.data_rota)).size
+
+  return (
+    <div className="space-y-4">
+      {/* Stats banner numérico */}
+      <div className="bg-[#FFF8DC] border border-[#F2C800]/40 rounded-xl px-5 py-3 flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
+        <span className="text-gray-600">
+          μ: <strong className="text-[#D4A800]">{mediaN.toFixed(1)} dev/dia</strong>
+        </span>
+        <span className="text-gray-600">
+          σ: <strong className="text-[#D4A800]">{desvioN.toFixed(1)} dev</strong>
+        </span>
+        <span className="text-gray-600">
+          Gatilho ({sigma}σ): <strong className="text-red-500">{Number.isInteger(gatilhoNum) ? gatilhoNum : gatilhoNum.toFixed(2)} dev/dia</strong>
+        </span>
+        <span className="text-gray-400 text-xs self-center">Referência: {periodoRef}</span>
+      </div>
+
+      {/* Resumo de estouro */}
+      {estouros.length > 0 ? (
+        <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex flex-wrap gap-6">
+          <div>
+            <p className="text-xs text-red-400 font-medium uppercase tracking-wide mb-0.5">Eventos de estouro</p>
+            <p className="text-2xl font-bold text-red-600">{estouros.length}</p>
+          </div>
+          <div>
+            <p className="text-xs text-red-400 font-medium uppercase tracking-wide mb-0.5">Motoristas</p>
+            <p className="text-2xl font-bold text-red-600">{motoristasUniq}</p>
+          </div>
+          <div>
+            <p className="text-xs text-red-400 font-medium uppercase tracking-wide mb-0.5">Dias com ocorrência</p>
+            <p className="text-2xl font-bold text-red-600">{diasUniq}</p>
+          </div>
+        </div>
+      ) : dados.length > 0 ? (
+        <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-5 py-3 text-sm text-emerald-700 font-medium">
+          Nenhum motorista excedeu o gatilho no período.
+        </div>
+      ) : null}
+
+      {/* Top ofensores para causa raiz */}
+      <TopOfensores dados={dados} gatilhoNum={gatilhoNum} />
+
+      {/* Alerta precoce */}
+      {quase.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+          <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">
+            Alerta precoce — dias entre 70–99% do gatilho
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {quase.map(nome => (
+              <span key={nome} className="bg-amber-100 text-amber-800 text-xs font-semibold px-2.5 py-1 rounded-full">
+                {nome}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Controles */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <input
+          type="text"
+          value={busca}
+          onChange={e => onBusca(e.target.value)}
+          placeholder="Buscar motorista..."
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#F2C800] focus:outline-none w-56"
+        />
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+          <button
+            onClick={() => onSoEstouro(true)}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+              soEstouro ? 'bg-red-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Só estouro
+          </button>
+          <button
+            onClick={() => onSoEstouro(false)}
+            className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+              !soEstouro ? 'bg-[#003087] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Todos c/ dev
+          </button>
+        </div>
+      </div>
+
+      {/* Tabela de eventos diários */}
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+        <div className="overflow-auto max-h-[32rem]">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#003087] text-white text-xs font-medium">
+                <th className="text-left   py-2.5 px-4">Data</th>
+                <th className="text-left   py-2.5 px-4">Motorista</th>
+                <th className="text-right  py-2.5 px-4">Fat. Dia</th>
+                <th className="text-right  py-2.5 px-4">Dev. Dia</th>
+                <th className="text-right  py-2.5 px-4">Δ Gatilho</th>
+                <th className="text-left   py-2.5 px-4">Uso do Gatilho</th>
+                <th className="text-center py-2.5 px-4">Zona ABC</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtrados.map((m, i) => {
+                const zona  = getZona(m.devs_dia, mediaN, desvioN, sigma)
+                const c     = ZONA[zona]
+                const delta = m.devs_dia - gatilhoNum
+                return (
+                  <tr
+                    key={`${m.data_rota}-${m.motorista}-${i}`}
+                    className="border-b border-gray-50"
+                    style={{ backgroundColor: zona !== 'normal' ? c.rowBg : undefined }}
+                  >
+                    <td className="py-2.5 px-4 font-semibold text-[#003087] whitespace-nowrap">
+                      {fmtData(m.data_rota)}
+                    </td>
+                    <td className="py-2.5 px-4">
+                      <p
+                        className="font-medium text-sm"
+                        style={{ color: zona === 'critica' ? '#DC2626' : '#111111' }}
+                      >
+                        {m.nome_motorista}
+                      </p>
+                      <p className="text-gray-400 text-xs">{m.motorista}</p>
+                    </td>
+                    <td className="py-2.5 px-4 text-right text-gray-400 text-xs">{m.fat_dia.toLocaleString()}</td>
+                    <td
+                      className="py-2.5 px-4 text-right font-bold"
+                      style={{ color: zona === 'critica' ? '#DC2626' : '#003087' }}
+                    >
+                      {m.devs_dia}
+                    </td>
+                    <td
+                      className={`py-2.5 px-4 text-right text-xs font-semibold ${delta > 0 ? 'text-red-500' : 'text-emerald-600'}`}
+                    >
+                      {delta > 0 ? '+' : ''}{delta}
+                    </td>
+                    <td className="py-2.5 px-4"><UsoBarra valor={m.devs_dia} gatilho={gatilhoNum} /></td>
+                    <td className="py-2.5 px-4 text-center"><ZonaBadge zona={zona} /></td>
+                  </tr>
+                )
+              })}
+              {filtrados.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-gray-400 text-sm">
+                    {soEstouro
+                      ? 'Nenhum estouro de gatilho no período.'
+                      : dados.length === 0
+                        ? 'Selecione um mês para ver os dados.'
+                        : 'Nenhum motorista encontrado.'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        {filtrados.length > 0 && (
+          <div className="px-4 py-2 border-t border-gray-50 text-xs text-gray-400">
+            {filtrados.length} {soEstouro ? 'evento(s) de estouro' : 'dia(s) com devolução'}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -326,184 +521,6 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
     </div>
   )
 
-  // ── Tab Motoristas (Dev. Total / PDV Fechado) — gatilho numérico ──────────
-  function renderTabMotoristas(
-    dados:      GatilhoMotorista[],
-    filtrados:  GatilhoMotorista[],
-    quase:      string[],
-    gatilhoNum: number,
-    mediaN:     number,
-    desvioN:    number,
-  ) {
-    const estouros      = dados.filter(m => m.devs_dia > gatilhoNum)
-    const motoristasUniq = new Set(estouros.map(m => m.motorista)).size
-    const diasUniq       = new Set(estouros.map(m => m.data_rota)).size
-
-    return (
-      <div className="space-y-4">
-        {/* Stats banner numérico */}
-        <div className="bg-[#FFF8DC] border border-[#F2C800]/40 rounded-xl px-5 py-3 flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
-          <span className="text-gray-600">
-            μ: <strong className="text-[#D4A800]">{mediaN.toFixed(1)} dev/dia</strong>
-          </span>
-          <span className="text-gray-600">
-            σ: <strong className="text-[#D4A800]">{desvioN.toFixed(1)} dev</strong>
-          </span>
-          <span className="text-gray-600">
-            Gatilho ({sigma}σ): <strong className="text-red-500">{Number.isInteger(gatilhoNum) ? gatilhoNum : gatilhoNum.toFixed(2)} dev/dia</strong>
-          </span>
-          <span className="text-gray-400 text-xs self-center">Referência: {periodoRef}</span>
-        </div>
-
-        {/* Resumo de estouro */}
-        {estouros.length > 0 ? (
-          <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex flex-wrap gap-6">
-            <div>
-              <p className="text-xs text-red-400 font-medium uppercase tracking-wide mb-0.5">Eventos de estouro</p>
-              <p className="text-2xl font-bold text-red-600">{estouros.length}</p>
-            </div>
-            <div>
-              <p className="text-xs text-red-400 font-medium uppercase tracking-wide mb-0.5">Motoristas</p>
-              <p className="text-2xl font-bold text-red-600">{motoristasUniq}</p>
-            </div>
-            <div>
-              <p className="text-xs text-red-400 font-medium uppercase tracking-wide mb-0.5">Dias com ocorrência</p>
-              <p className="text-2xl font-bold text-red-600">{diasUniq}</p>
-            </div>
-          </div>
-        ) : dados.length > 0 ? (
-          <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-5 py-3 text-sm text-emerald-700 font-medium">
-            Nenhum motorista excedeu o gatilho no período.
-          </div>
-        ) : null}
-
-        {/* Top ofensores para causa raiz */}
-        <TopOfensores dados={dados} gatilhoNum={gatilhoNum} />
-
-        {/* Alerta precoce */}
-        {quase.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
-            <p className="text-xs font-bold text-amber-700 uppercase tracking-wider mb-2">
-              Alerta precoce — dias entre 70–99% do gatilho
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {quase.map(nome => (
-                <span key={nome} className="bg-amber-100 text-amber-800 text-xs font-semibold px-2.5 py-1 rounded-full">
-                  {nome}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Controles */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <input
-            type="text"
-            value={busca}
-            onChange={e => setBusca(e.target.value)}
-            placeholder="Buscar motorista..."
-            className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#F2C800] focus:outline-none w-56"
-          />
-          <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
-            <button
-              onClick={() => setSoEstouro(true)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                soEstouro ? 'bg-red-500 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Só estouro
-            </button>
-            <button
-              onClick={() => setSoEstouro(false)}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
-                !soEstouro ? 'bg-[#003087] text-white shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Todos c/ dev
-            </button>
-          </div>
-        </div>
-
-        {/* Tabela de eventos diários */}
-        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-          <div className="overflow-auto max-h-[32rem]">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10">
-                <tr className="bg-[#003087] text-white text-xs font-medium">
-                  <th className="text-left   py-2.5 px-4">Data</th>
-                  <th className="text-left   py-2.5 px-4">Motorista</th>
-                  <th className="text-right  py-2.5 px-4">Fat. Dia</th>
-                  <th className="text-right  py-2.5 px-4">Dev. Dia</th>
-                  <th className="text-right  py-2.5 px-4">Δ Gatilho</th>
-                  <th className="text-left   py-2.5 px-4">Uso do Gatilho</th>
-                  <th className="text-center py-2.5 px-4">Zona ABC</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtrados.map((m, i) => {
-                  const zona  = getZona(m.devs_dia, mediaN, desvioN, sigma)
-                  const c     = ZONA[zona]
-                  const delta = m.devs_dia - gatilhoNum
-                  return (
-                    <tr
-                      key={`${m.data_rota}-${m.motorista}-${i}`}
-                      className="border-b border-gray-50"
-                      style={{ backgroundColor: zona !== 'normal' ? c.rowBg : undefined }}
-                    >
-                      <td className="py-2.5 px-4 font-semibold text-[#003087] whitespace-nowrap">
-                        {fmtData(m.data_rota)}
-                      </td>
-                      <td className="py-2.5 px-4">
-                        <p
-                          className="font-medium text-sm"
-                          style={{ color: zona === 'critica' ? '#DC2626' : '#111111' }}
-                        >
-                          {m.nome_motorista}
-                        </p>
-                        <p className="text-gray-400 text-xs">{m.motorista}</p>
-                      </td>
-                      <td className="py-2.5 px-4 text-right text-gray-400 text-xs">{m.fat_dia.toLocaleString()}</td>
-                      <td
-                        className="py-2.5 px-4 text-right font-bold"
-                        style={{ color: zona === 'critica' ? '#DC2626' : '#003087' }}
-                      >
-                        {m.devs_dia}
-                      </td>
-                      <td
-                        className={`py-2.5 px-4 text-right text-xs font-semibold ${delta > 0 ? 'text-red-500' : 'text-emerald-600'}`}
-                      >
-                        {delta > 0 ? '+' : ''}{delta}
-                      </td>
-                      <td className="py-2.5 px-4"><UsoBarra valor={m.devs_dia} gatilho={gatilhoNum} /></td>
-                      <td className="py-2.5 px-4 text-center"><ZonaBadge zona={zona} /></td>
-                    </tr>
-                  )
-                })}
-                {filtrados.length === 0 && (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-gray-400 text-sm">
-                      {soEstouro
-                        ? 'Nenhum estouro de gatilho no período.'
-                        : dados.length === 0
-                          ? 'Selecione um mês para ver os dados.'
-                          : 'Nenhum motorista encontrado.'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          {filtrados.length > 0 && (
-            <div className="px-4 py-2 border-t border-gray-50 text-xs text-gray-400">
-              {filtrados.length} {soEstouro ? 'evento(s) de estouro' : 'dia(s) com devolução'}
-            </div>
-          )}
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-5">
       {/* Sigma selector */}
@@ -576,12 +593,24 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
         ))}
       </div>
 
-      {tab === 'geral'   && tabGeral}
-      {tab === 'total'   && renderTabMotoristas(
-        total, totalFiltrado, totalQuase, gatilhoTotal, mediaTotal, desvioTotal
+      {tab === 'geral' && tabGeral}
+      {tab === 'total' && (
+        <TabMotoristas
+          dados={total}         filtrados={totalFiltrado}    quase={totalQuase}
+          gatilhoNum={gatilhoTotal} mediaN={mediaTotal}      desvioN={desvioTotal}
+          sigma={sigma}         periodoRef={periodoRef}
+          busca={busca}         soEstouro={soEstouro}
+          onBusca={setBusca}    onSoEstouro={setSoEstouro}
+        />
       )}
-      {tab === 'fechado' && renderTabMotoristas(
-        fechado, fechadoFiltrado, fechadoQuase, gatilhoFechado, mediaFechado, desvioFechado
+      {tab === 'fechado' && (
+        <TabMotoristas
+          dados={fechado}         filtrados={fechadoFiltrado}  quase={fechadoQuase}
+          gatilhoNum={gatilhoFechado} mediaN={mediaFechado}    desvioN={desvioFechado}
+          sigma={sigma}           periodoRef={periodoRef}
+          busca={busca}           soEstouro={soEstouro}
+          onBusca={setBusca}      onSoEstouro={setSoEstouro}
+        />
       )}
     </div>
   )

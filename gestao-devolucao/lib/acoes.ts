@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMotoristaMap } from './motoristas'
 
 /**
@@ -7,7 +8,7 @@ import { getMotoristaMap } from './motoristas'
  */
 export async function gerarPlanoAcao(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
+  supabase: SupabaseClient<any, 'public', any>,
   importacaoId: string,
   periodo: string,
   userId: string,

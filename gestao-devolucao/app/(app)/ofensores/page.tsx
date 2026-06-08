@@ -56,24 +56,27 @@ export default async function OfensoresPage({ searchParams }: { searchParams: Pr
     // soma de devoluções fora do raio
     sumDevFora[cod] = (sumDevFora[cod] ?? 0) + Number(r.pdvs_devolvidos ?? 1)
 
-    // agrupamento por PDV
-    if (!pdvsPorMotorista[cod]) pdvsPorMotorista[cod] = []
-    const ex = pdvsPorMotorista[cod].find(p => p.codigo_pdv === r.codigo_pdv)
-    if (ex) {
-      ex.qtd += Number(r.pdvs_devolvidos ?? 1)
-      if (!ex.motivo && r.motivo) ex.motivo = r.motivo
+    // agrupamento por PDV — imutável: sempre cria novo array ao atualizar
+    const lista   = pdvsPorMotorista[cod] ?? []
+    const qtdAdd  = Number(r.pdvs_devolvidos ?? 1)
+    const idxEx   = lista.findIndex(p => p.codigo_pdv === r.codigo_pdv)
+    if (idxEx >= 0) {
+      const prev = lista[idxEx]
+      pdvsPorMotorista[cod] = [
+        ...lista.slice(0, idxEx),
+        { ...prev, qtd: prev.qtd + qtdAdd, motivo: prev.motivo || r.motivo || '' },
+        ...lista.slice(idxEx + 1),
+      ]
     } else {
-      pdvsPorMotorista[cod].push({
-        codigo_pdv: r.codigo_pdv ?? '—',
-        cliente:    r.cliente    ?? '—',
-        motivo:     r.motivo     ?? '',
-        qtd: 1,
-      })
+      pdvsPorMotorista[cod] = [
+        ...lista,
+        { codigo_pdv: r.codigo_pdv ?? '—', cliente: r.cliente ?? '—', motivo: r.motivo ?? '', qtd: qtdAdd },
+      ]
     }
   }
   // ordena por qtd desc dentro de cada motorista
   for (const cod of Object.keys(pdvsPorMotorista)) {
-    pdvsPorMotorista[cod].sort((a, b) => b.qtd - a.qtd)
+    pdvsPorMotorista[cod] = [...pdvsPorMotorista[cod]].sort((a, b) => b.qtd - a.qtd)
   }
 
   // ── Motoristas ────────────────────────────────────────────────────────────
@@ -114,10 +117,18 @@ export default async function OfensoresPage({ searchParams }: { searchParams: Pr
   for (const [cod, pdvs] of Object.entries(pdvsPorMotorista)) {
     const nome = resolveMotorista(motMap, cod)
     for (const pdv of pdvs) {
-      if (!pdvForaInfo[pdv.codigo_pdv]) pdvForaInfo[pdv.codigo_pdv] = []
-      const ex = pdvForaInfo[pdv.codigo_pdv].find(i => i.motorista === cod)
-      if (ex) ex.qtd += pdv.qtd
-      else pdvForaInfo[pdv.codigo_pdv].push({ motorista: cod, nome, qtd: pdv.qtd })
+      const listaAtual = pdvForaInfo[pdv.codigo_pdv] ?? []
+      const idxEx      = listaAtual.findIndex(i => i.motorista === cod)
+      if (idxEx >= 0) {
+        const prev = listaAtual[idxEx]
+        pdvForaInfo[pdv.codigo_pdv] = [
+          ...listaAtual.slice(0, idxEx),
+          { ...prev, qtd: prev.qtd + pdv.qtd },
+          ...listaAtual.slice(idxEx + 1),
+        ]
+      } else {
+        pdvForaInfo[pdv.codigo_pdv] = [...listaAtual, { motorista: cod, nome, qtd: pdv.qtd }]
+      }
     }
   }
 
