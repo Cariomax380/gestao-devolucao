@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS public.devolucoes (
   motorista                 text,
   cliente                   text,
   codigo_pdv                text,
-  status_final              text        CHECK (status_final IN ('entregue','devolvido','devolvido_parcial','reagendado','tratativa_aberta')),
+  status_final              text        CHECK (status_final IN ('entregue','devolvido','devolvido_parcial','reagendado','tratativa_aberta','em_tratamento')),
   motivo                    text,
   classificacao_motivo      text,
   pdvs_faturados            integer     DEFAULT 1,
