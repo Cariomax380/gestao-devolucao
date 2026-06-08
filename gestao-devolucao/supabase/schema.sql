@@ -796,3 +796,248 @@ GRANT EXECUTE ON FUNCTION resumo_reversoes_cruzado(text)            TO authentic
 GRANT EXECUTE ON FUNCTION resumo_tendencia_reversao_semanal(text)   TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION resumo_calor_classificacao_dia(text)      TO authenticated, service_role;
 GRANT EXECUTE ON FUNCTION resumo_calor_horario_dia(text)            TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_gatilho_geral(text)                TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_gatilho_motoristas(text, text)     TO authenticated, service_role;
+
+
+-- ================================================================
+-- 23. resumo_gatilho_geral - % devolucao diaria vs gatilho
+-- Retorna media_prev e desvio_prev sem pre-computar gatilho/estouro
+-- (o cliente aplica o sigma selecionado). Outliers removidos por P95.
+-- ================================================================
+DROP FUNCTION IF EXISTS resumo_gatilho_geral(text);
+CREATE OR REPLACE FUNCTION resumo_gatilho_geral(p_periodo text DEFAULT NULL)
+RETURNS TABLE(
+  data_rota    text,
+  pdvs_fat     bigint,
+  pdvs_dev     bigint,
+  pct_dev      numeric,
+  media_prev   numeric,
+  desvio_prev  numeric,
+  periodo_ref  text
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_mes_atual text;
+  v_mes_prev  text;
+BEGIN
+  v_mes_atual := CASE
+    WHEN p_periodo IS NOT NULL AND LENGTH(p_periodo) >= 7 THEN LEFT(p_periodo, 7)
+    ELSE TO_CHAR(CURRENT_DATE, 'YYYY-MM')
+  END;
+
+  v_mes_prev := TO_CHAR(
+    TO_DATE(v_mes_atual || '-01', 'YYYY-MM-DD') - INTERVAL '1 month',
+    'YYYY-MM'
+  );
+
+  RETURN QUERY
+  WITH prev AS (
+    SELECT
+      d.data_rota,
+      SUM(d.pdvs_devolvidos)::numeric / NULLIF(SUM(d.pdvs_faturados)::numeric, 0) * 100 AS pct_dia
+    FROM devolucoes d
+    WHERE d.periodo = v_mes_prev
+    GROUP BY d.data_rota
+    HAVING SUM(d.pdvs_faturados) > 0
+  ),
+  p95 AS (
+    SELECT PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY pct_dia) AS limite
+    FROM prev
+  ),
+  prev_filtrado AS (
+    SELECT p.pct_dia
+    FROM prev p
+    CROSS JOIN p95
+    WHERE p.pct_dia > 0              -- exclui dias sem devolucao da media
+      AND p.pct_dia <= p95.limite    -- remove outliers (P95)
+  ),
+  stats AS (
+    SELECT
+      COALESCE(AVG(pct_dia), 0)         AS media,
+      COALESCE(STDDEV_SAMP(pct_dia), 0) AS desvio
+    FROM prev_filtrado
+  ),
+  atual AS (
+    SELECT
+      d.data_rota,
+      SUM(d.pdvs_devolvidos)::numeric AS dev,
+      SUM(d.pdvs_faturados)::numeric  AS fat
+    FROM devolucoes d
+    WHERE d.periodo LIKE v_mes_atual || '%'
+    GROUP BY d.data_rota
+    HAVING SUM(d.pdvs_faturados) > 0
+  )
+  SELECT
+    a.data_rota::text,
+    a.fat::bigint,
+    a.dev::bigint,
+    ROUND(a.dev / a.fat * 100, 2),
+    ROUND(s.media, 2),
+    ROUND(s.desvio, 2),
+    v_mes_prev
+  FROM atual a, stats s
+  ORDER BY a.data_rota;
+END;
+$$;
+
+
+-- ================================================================
+-- 24. resumo_gatilho_motoristas - breakdown diario por motorista (numerico)
+-- Retorna 1 linha por (motorista, dia) com contagem absoluta de devoluções.
+-- Stats (media_prev, desvio_prev) calculados sobre pares (motorista, dia)
+-- do mês anterior com dev > 0, excluindo outliers P95.
+-- ================================================================
+DROP FUNCTION IF EXISTS resumo_gatilho_motoristas(text, text);
+CREATE OR REPLACE FUNCTION resumo_gatilho_motoristas(
+  p_periodo text DEFAULT NULL,
+  p_tipo    text DEFAULT 'total'
+)
+RETURNS TABLE(
+  data_rota      text,
+  motorista      text,
+  nome_motorista text,
+  devs_dia       bigint,
+  fat_dia        bigint,
+  media_prev     numeric,
+  desvio_prev    numeric,
+  periodo_ref    text
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+DECLARE
+  v_mes_atual text;
+  v_mes_prev  text;
+BEGIN
+  v_mes_atual := CASE
+    WHEN p_periodo IS NOT NULL AND LENGTH(p_periodo) >= 7 THEN LEFT(p_periodo, 7)
+    ELSE TO_CHAR(CURRENT_DATE, 'YYYY-MM')
+  END;
+
+  v_mes_prev := TO_CHAR(
+    TO_DATE(v_mes_atual || '-01', 'YYYY-MM-DD') - INTERVAL '1 month',
+    'YYYY-MM'
+  );
+
+  RETURN QUERY
+  WITH prev_raw AS (
+    -- Contagem por (motorista, dia) no mes anterior
+    SELECT
+      d.motorista,
+      d.data_rota,
+      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                            AS dev_total,
+      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo = 'PDV fechado')::bigint AS dev_fechado
+    FROM devolucoes d
+    WHERE d.periodo = v_mes_prev
+      AND d.motorista IS NOT NULL AND d.motorista != ''
+    GROUP BY d.motorista, d.data_rota
+  ),
+  prev_sel AS (
+    -- Seleciona metrica e exclui dias sem devolucao (zeros)
+    SELECT CASE WHEN p_tipo = 'pdv_fechado' THEN pr.dev_fechado ELSE pr.dev_total END AS dev_dia
+    FROM prev_raw pr
+    WHERE (CASE WHEN p_tipo = 'pdv_fechado' THEN pr.dev_fechado ELSE pr.dev_total END) > 0
+  ),
+  p95 AS (
+    SELECT COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ps.dev_dia), 0) AS limite
+    FROM prev_sel ps
+  ),
+  prev_filtrado AS (
+    -- Remove outliers acima do P95
+    SELECT ps.dev_dia
+    FROM prev_sel ps CROSS JOIN p95
+    WHERE ps.dev_dia <= p95.limite
+  ),
+  stats AS (
+    SELECT
+      COALESCE(AVG(dev_dia), 0)         AS media,
+      COALESCE(STDDEV_SAMP(dev_dia), 0) AS desvio
+    FROM prev_filtrado
+  ),
+  atual_raw AS (
+    -- Contagem por (motorista, dia) no mes atual
+    SELECT
+      d.motorista,
+      d.data_rota,
+      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                            AS dev_total,
+      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo = 'PDV fechado')::bigint AS dev_fechado,
+      COUNT(*)::bigint                                                                   AS fat
+    FROM devolucoes d
+    WHERE d.periodo LIKE v_mes_atual || '%'
+      AND d.motorista IS NOT NULL AND d.motorista != ''
+    GROUP BY d.motorista, d.data_rota
+  ),
+  atual_sel AS (
+    -- Seleciona metrica; inclui apenas dias com ao menos 1 devolucao
+    SELECT
+      ar.motorista,
+      ar.data_rota,
+      CASE WHEN p_tipo = 'pdv_fechado' THEN ar.dev_fechado ELSE ar.dev_total END AS dev_dia,
+      ar.fat
+    FROM atual_raw ar
+    WHERE (CASE WHEN p_tipo = 'pdv_fechado' THEN ar.dev_fechado ELSE ar.dev_total END) > 0
+  )
+  SELECT
+    ac.data_rota::text,
+    ac.motorista::text,
+    COALESCE(m.nome, 'cod. ' || ac.motorista)::text,
+    ac.dev_dia,
+    ac.fat,
+    ROUND(s.media, 2),
+    ROUND(s.desvio, 2),
+    v_mes_prev
+  FROM atual_sel ac
+  CROSS JOIN stats s
+  LEFT JOIN motoristas m ON m.codigo = ac.motorista
+  ORDER BY ac.data_rota DESC, ac.dev_dia DESC;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION resumo_gatilho_geral(text)              TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION resumo_gatilho_motoristas(text, text)   TO authenticated, service_role;
+
+-- ================================================================
+-- 25. resumo_reversoes_pdv_fechado_diario
+-- Abertura dia a dia de reversao para o motivo PDV fechado.
+-- Retorna 1 linha por data_rota com QTD REV, QTD DEV e % reversao.
+-- ================================================================
+DROP FUNCTION IF EXISTS resumo_reversoes_pdv_fechado_diario(text);
+CREATE OR REPLACE FUNCTION resumo_reversoes_pdv_fechado_diario(
+  p_periodo text DEFAULT NULL
+)
+RETURNS TABLE(
+  data_rota    text,
+  qtd_rev      bigint,
+  qtd_dev      bigint,
+  pct_reversao numeric
+) LANGUAGE plpgsql SECURITY DEFINER AS $$
+BEGIN
+  RETURN QUERY
+  WITH base AS (
+    SELECT
+      d.data_rota,
+      CASE WHEN d.pdv_repasse > 0 THEN 1 ELSE 0 END AS flag_rev,
+      CASE WHEN d.pdv_repasse = 0 THEN 1 ELSE 0 END AS flag_dev
+    FROM devolucoes d
+    WHERE (p_periodo IS NULL OR d.periodo LIKE p_periodo || '%')
+      AND d.status_final != 'tratativa_aberta'
+      AND d.motivo = 'PDV fechado'
+      AND (d.pdvs_devolvidos > 0 OR d.pdv_repasse > 0)
+  ),
+  agg AS (
+    SELECT
+      b.data_rota,
+      SUM(b.flag_rev)::bigint AS qr,
+      SUM(b.flag_dev)::bigint AS qd
+    FROM base b
+    GROUP BY b.data_rota
+    HAVING SUM(b.flag_rev) + SUM(b.flag_dev) > 0
+  )
+  SELECT
+    a.data_rota::text,
+    a.qr,
+    a.qd,
+    ROUND(a.qr::numeric / NULLIF((a.qr + a.qd)::numeric, 0) * 100, 2)
+  FROM agg a
+  ORDER BY a.data_rota;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION resumo_reversoes_pdv_fechado_diario(text) TO authenticated, service_role;

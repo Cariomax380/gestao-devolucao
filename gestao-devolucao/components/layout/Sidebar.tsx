@@ -70,7 +70,7 @@ export function Sidebar() {
         { type: 'link',   href: '/reversoes',    icon: RefreshCw,       label: 'Reversões'      },
         { type: 'link',   href: '/tendencia',    icon: TrendingUp,      label: 'Tendência'      },
         { type: 'link',   href: '/calor',        icon: Grid3x3,         label: 'Mapa de Calor'  },
-        { type: 'link',   href: '/reincidencia', icon: Repeat2,         label: 'Reincidência'   },
+        { type: 'link',   href: '/gatilho',       icon: Repeat2,         label: 'Gestão de Gatilho' },
         { type: 'link',   href: '/plano-acao',   icon: ClipboardList,   label: 'Plano de Ação'  },
         { type: 'link',   href: '/configuracoes',icon: Settings,        label: 'Configurações'  },
         { type: 'button', icon: Upload, label: 'Importação', onClick: () => setImportOpen(true) },

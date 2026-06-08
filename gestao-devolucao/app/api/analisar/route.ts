@@ -1,32 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
-export async function POST(_req: NextRequest) {
+export async function POST(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const params = { p_periodo: null, p_data_inicio: null, p_data_fim: null, p_motorista: null, p_motivo: null }
+  const body = await req.json().catch(() => ({}))
+  const periodo: string | null = body.periodo ?? null
+
+  const rpcParams = { p_periodo: periodo, p_data_inicio: null, p_data_fim: null, p_motorista: null, p_motivo: null }
 
   const [
     { data: resumo },
     { data: motivos },
     { data: ofensores },
-    { data: raio },
     { data: porCls },
   ] = await Promise.all([
-    supabase.rpc('resumo_dashboard_filtrado', params),
-    supabase.rpc('resumo_por_motivo_filtrado', params),
-    supabase.rpc('resumo_ofensores', { p_periodo: null }),
-    supabase.rpc('resumo_raio', { p_periodo: null }),
-    supabase.rpc('resumo_por_classificacao_filtrado', params),
+    supabase.rpc('resumo_dashboard_filtrado',         rpcParams),
+    supabase.rpc('resumo_por_motivo_filtrado',        rpcParams),
+    supabase.rpc('resumo_ofensores',                  { p_periodo: periodo }),
+    supabase.rpc('resumo_por_classificacao_filtrado', rpcParams),
   ])
 
   const dados = {
+    periodo: periodo ?? 'todos',
     resumo_geral: resumo?.[0] ?? null,
     top_motivos: (motivos ?? []).slice(0, 10),
     top_ofensores: (ofensores ?? []).slice(0, 10),
-    resumo_raio: raio?.[0] ?? null,
     por_classificacao: porCls ?? [],
   }
 

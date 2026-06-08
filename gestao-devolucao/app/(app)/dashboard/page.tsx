@@ -37,6 +37,8 @@ export default async function DashboardPage({
     p_motivo:      sp.motivo      ?? null,
   }
 
+  const periodosParaMeta = ['global', ...(sp.periodo ? [sp.periodo] : [])]
+
   const [
     { data: resumo,       error: errResumo },
     { data: porData,      error: errData   },
@@ -47,6 +49,7 @@ export default async function DashboardPage({
     { data: motoristasList },
     { data: motivosDisp },
     motMap,
+    { data: metasRaw },
   ] = await Promise.all([
     supabase.rpc('resumo_dashboard_filtrado',         params),
     supabase.rpc('resumo_por_data_filtrado',          params),
@@ -57,6 +60,7 @@ export default async function DashboardPage({
     supabase.from('motoristas').select('codigo,nome').order('nome'),
     supabase.rpc('motivos_disponiveis'),
     getMotoristaMap(),
+    supabase.from('metas').select('indicador, valor_meta, periodo').eq('cdd', '*').in('periodo', periodosParaMeta),
   ])
 
   if (errResumo) return <ErroRPC nome="resumo_dashboard_filtrado" />
@@ -73,15 +77,28 @@ export default async function DashboardPage({
   const pct_dev_hl  = vfat > 0 ? vdev / vfat * 100 : null
   const pct_repasse = (dev + rep) > 0 ? rep / (dev + rep) * 100 : null
 
+  // Metas: período específico sobrepõe global
+  const metasMap: Record<string, number> = {}
+  for (const m of (metasRaw ?? [])) if ((m as any).periodo === 'global')  metasMap[(m as any).indicador] = Number((m as any).valor_meta)
+  for (const m of (metasRaw ?? [])) if ((m as any).periodo !== 'global')  metasMap[(m as any).indicador] = Number((m as any).valor_meta)
+
+  const noMeta = { metaLabel: null as string | null, atingiu: null as boolean | null }
+  function mk(rawVal: number | null, indicador: string, sentido: 'alto' | 'baixo') {
+    const mv = metasMap[indicador] ?? null
+    if (mv == null || rawVal == null) return noMeta
+    const atingiu = sentido === 'baixo' ? rawVal <= mv : rawVal >= mv
+    return { metaLabel: `meta: ${Number.isInteger(mv) ? mv : mv.toFixed(1)}%`, atingiu }
+  }
+
   const kpis = [
-    { label: 'PDVs Faturados',    value: fat.toLocaleString('pt-BR') },
-    { label: 'PDVs Devolvidos',   value: dev.toLocaleString('pt-BR') },
-    { label: 'Devolução PDV%',    value: formatPct(pct_dev_pdv, 2)   },
-    { label: 'Vol. Faturado HL',  value: formatHL(vfat)              },
-    { label: 'Vol. Devolvido HL', value: formatHL(vdev)              },
-    { label: 'Devolução HL%',     value: formatPct(pct_dev_hl, 2)    },
-    { label: 'Repasses',          value: rep.toLocaleString('pt-BR') },
-    { label: '% Repasse',         value: formatPct(pct_repasse, 2)   },
+    { label: 'PDVs Faturados',    value: fat.toLocaleString('pt-BR'), ...noMeta },
+    { label: 'PDVs Devolvidos',   value: dev.toLocaleString('pt-BR'), ...noMeta },
+    { label: 'Devolução PDV%',    value: formatPct(pct_dev_pdv, 2),   ...mk(pct_dev_pdv, 'devolucao_pdv_pct', 'baixo') },
+    { label: 'Vol. Faturado HL',  value: formatHL(vfat),              ...noMeta },
+    { label: 'Vol. Devolvido HL', value: formatHL(vdev),              ...noMeta },
+    { label: 'Devolução HL%',     value: formatPct(pct_dev_hl, 2),    ...mk(pct_dev_hl,  'devolucao_hl_pct',  'baixo') },
+    { label: 'Repasses',          value: rep.toLocaleString('pt-BR'), ...noMeta },
+    { label: '% Repasse',         value: formatPct(pct_repasse, 2),   ...mk(pct_repasse, 'reversao_pct',       'alto') },
   ]
 
   // Vista diária quando período é mês específico (YYYY-MM), mensal nos demais casos
@@ -178,6 +195,11 @@ export default async function DashboardPage({
           <div key={card.label} className="bg-white border border-gray-100 border-l-4 border-l-[#F2C800] rounded-xl px-4 py-4">
             <p className="text-sm text-gray-500 font-medium mb-1 leading-tight">{card.label}</p>
             <p className="text-2xl font-bold text-[#003087]">{card.value}</p>
+            {card.metaLabel != null && (
+              <p className={`text-xs font-semibold mt-1 ${card.atingiu ? 'text-emerald-600' : 'text-red-500'}`}>
+                {card.metaLabel} {card.atingiu ? '✓' : '✗'}
+              </p>
+            )}
           </div>
         ))}
       </div>
