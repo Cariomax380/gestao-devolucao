@@ -72,8 +72,11 @@ function normalizar(r: Record<string, unknown>, importacaoId: string) {
   const motivoRaw  = String(r.last_reason_waiting_modulation ?? '')
   const motivoInfo = MOTIVO_MAP[motivoRaw]
   const statusFinal = STATUS_MAP[statusRaw] ?? 'tratativa_aberta'
+  // WAITING_MODULATION → 'em_tratamento' no STATUS_MAP; deve contar como
+  // devolvido assim como IN_TREATMENT / EM TRATAMENTO.
   const isDevolvido = ['DEVOLVIDO', 'ENTREGA PARCIAL', 'EM TRATAMENTO',
-    'DEFINITELY_RETURNED', 'PARTIAL_DELIVERY', 'IN_TREATMENT'].includes(statusRaw)
+    'DEFINITELY_RETURNED', 'PARTIAL_DELIVERY', 'IN_TREATMENT',
+    'WAITING_MODULATION'].includes(statusRaw)
 
   // pdv_repasse vem da coluna 'reattempt' (1 = entregue com repasse na retentativa)
   // NÃO é o status RESCHEDULED — esse é apenas reagendamento

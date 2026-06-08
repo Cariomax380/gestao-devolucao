@@ -8,6 +8,8 @@ import { ReversaoGraficos } from './ReversaoGraficos'
 import { ReversaoMotivo } from './ReversaoMotivo'
 import type { ResultadoReversao, Agrupamento } from '@/lib/calcular-reversao'
 import { ErroRPC } from '@/components/layout/ErroRPC'
+import { ReversaoPdvFechado } from './ReversaoPdvFechado'
+import type { PdvFechadoDia } from './ReversaoPdvFechado'
 
 type RPCRow = { grupo: string; qtd_rev: number; qtd_dev: number; total_oportunidades: number }
 
@@ -46,10 +48,11 @@ export default async function ReversaoPage({
     { data: rowData                        },
     { data: rowMotivo                      },
     { data: rowRota                        },
-    { data: rowMensal,   error: errMensal  },
-    { data: rowCruzado,  error: errCruzado },
+    { data: rowMensal,     error: errMensal    },
+    { data: rowCruzado,    error: errCruzado   },
+    { data: rowPdvDiario,  error: errPdvDiario },
   ] = await Promise.all([
-    supabase.rpc('resumo_reversoes',          { p_periodo: p }),
+    supabase.rpc('resumo_reversoes',                      { p_periodo: p }),
     supabase.rpc('periodos_disponiveis'),
     supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'geral'     }),
     supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'motorista' }),
@@ -57,14 +60,16 @@ export default async function ReversaoPage({
     supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'data'      }),
     supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'motivo'    }),
     supabase.rpc('resumo_reversoes_agrupado', { p_periodo: p, p_agrupamento: 'rota'      }),
-    supabase.rpc('resumo_reversoes_mensal',   { p_periodo: p }),
-    supabase.rpc('resumo_reversoes_cruzado',  { p_periodo: p }),
+    supabase.rpc('resumo_reversoes_mensal',               { p_periodo: p }),
+    supabase.rpc('resumo_reversoes_cruzado',              { p_periodo: p }),
+    supabase.rpc('resumo_reversoes_pdv_fechado_diario',   { p_periodo: p }),
   ])
 
-  if (errRes)    return <ErroRPC nome="resumo_reversoes" />
-  if (errGeral)  return <ErroRPC nome="resumo_reversoes_agrupado" />
-  if (errMensal) return <ErroRPC nome="resumo_reversoes_mensal" />
-  if (errCruzado) return <ErroRPC nome="resumo_reversoes_cruzado" />
+  if (errRes)        return <ErroRPC nome="resumo_reversoes" />
+  if (errGeral)      return <ErroRPC nome="resumo_reversoes_agrupado" />
+  if (errMensal)     return <ErroRPC nome="resumo_reversoes_mensal" />
+  if (errCruzado)    return <ErroRPC nome="resumo_reversoes_cruzado" />
+  if (errPdvDiario)  return <ErroRPC nome="resumo_reversoes_pdv_fechado_diario" />
 
   // ── KPIs ──────────────────────────────────────────────────────────────────
   const kpi          = res?.[0] ?? {}
@@ -100,6 +105,14 @@ export default async function ReversaoPage({
     motorista: String(r.motorista ?? ''),
     qtd_rev:   Number(r.qtd_rev),
     qtd_dev:   Number(r.qtd_dev),
+  }))
+
+  // ── PDV fechado — abertura diária ─────────────────────────────────────────
+  const dadosPdvDiario: PdvFechadoDia[] = (rowPdvDiario ?? []).map((r: any) => ({
+    data_rota:    String(r.data_rota ?? ''),
+    qtd_rev:      Number(r.qtd_rev),
+    qtd_dev:      Number(r.qtd_dev),
+    pct_reversao: Number(r.pct_reversao),
   }))
 
   // ── Motoristas sem nenhum repasse no período ───────────────────────────────
@@ -161,6 +174,9 @@ export default async function ReversaoPage({
         motivos={memoriaData.motivo}
         cruzado={dadosCruzado}
       />
+
+      {/* PDV Fechado — abertura dia a dia */}
+      <ReversaoPdvFechado dados={dadosPdvDiario} />
 
       {/* Memória de cálculo */}
       <ReversaoMemoria dados={memoriaData} />
