@@ -1016,12 +1016,13 @@ BEGIN
   ),
   -- ── Stats por motorista ────────────────────────────────────────────────────
   p95_mot AS (
-    -- P95 individual (evita que um dia extremo distorça o baseline do motorista)
+    -- P95 individual (evita que um dia extremo distorca o baseline do motorista)
+    -- alias ps2 necessario: RETURNS TABLE cria variavel implicita "motorista"
     SELECT
-      motorista,
-      COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY dev_dia), 0) AS limite
-    FROM prev_sel
-    GROUP BY motorista
+      ps2.motorista,
+      COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ps2.dev_dia), 0) AS limite
+    FROM prev_sel ps2
+    GROUP BY ps2.motorista
   ),
   prev_filtrado_mot AS (
     SELECT ps.motorista, ps.dev_dia
@@ -1031,19 +1032,19 @@ BEGIN
   ),
   stats_mot AS (
     SELECT
-      motorista,
-      COUNT(*)                           AS n_dias,
-      COALESCE(AVG(dev_dia),         0) AS media,
-      COALESCE(STDDEV_SAMP(dev_dia), 0) AS desvio
-    FROM prev_filtrado_mot
-    GROUP BY motorista
+      pfm.motorista,
+      COUNT(*)                            AS n_dias,
+      COALESCE(AVG(pfm.dev_dia),         0) AS media,
+      COALESCE(STDDEV_SAMP(pfm.dev_dia), 0) AS desvio
+    FROM prev_filtrado_mot pfm
+    GROUP BY pfm.motorista
   ),
-  -- ── Stats de frota (fallback para motoristas com < 3 dias de histórico) ───
+  -- ── Stats de frota (fallback para motoristas com < 3 dias de historico) ───
   fleet_stats AS (
     SELECT
-      COALESCE(AVG(dev_dia),         0) AS media,
-      COALESCE(STDDEV_SAMP(dev_dia), 0) AS desvio
-    FROM prev_filtrado_mot        -- mesma base já filtrada por P95 individual
+      COALESCE(AVG(pfm2.dev_dia),         0) AS media,
+      COALESCE(STDDEV_SAMP(pfm2.dev_dia), 0) AS desvio
+    FROM prev_filtrado_mot pfm2
   ),
   -- ── Mês atual ─────────────────────────────────────────────────────────────
   atual_raw AS (
