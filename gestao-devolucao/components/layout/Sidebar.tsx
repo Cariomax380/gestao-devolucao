@@ -20,9 +20,10 @@ import {
   ArrowUpDown,
   PackageMinus,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import { logout } from '@/app/auth/actions'
 import { ImportDrawer } from './ImportDrawer'
+import { BotaoRelatorio } from './BotaoRelatorio'
 
 /* ----------------------------------------------------------------
    Estrutura de grupos — para adicionar um novo módulo/acompanhamento
@@ -191,6 +192,13 @@ export function Sidebar() {
               </div>
             )
           })}
+
+          {/* Relatório PDF — fora dos grupos pois usa useSearchParams */}
+          <div className="mt-1 pt-1 border-t border-white/10">
+            <Suspense fallback={null}>
+              <BotaoRelatorio collapsed={collapsed} />
+            </Suspense>
+          </div>
         </nav>
 
         {/* Logout */}
