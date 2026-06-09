@@ -1,10 +1,125 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Plus, Pencil, Trash2 } from 'lucide-react'
+import { Plus, Pencil, Trash2, ChevronDown, ChevronUp } from 'lucide-react'
 import { AcaoDrawer } from './AcaoDrawer'
 import { excluirAcao } from './actions'
-import type { PlanoAcao } from '@/types'
+import type { PlanoAcao, GatilhoContexto } from '@/types'
+
+const TIPO_LABEL: Record<string, string> = {
+  total:   'Dev. Total',
+  fechado: 'PDV Fechado',
+  geral:   'Geral (frota)',
+}
+
+const CAT_ESTILO: Record<string, { bg: string; text: string }> = {
+  operacional: { bg: '#DBEAFE', text: '#1D4ED8' },
+  comercial:   { bg: '#EDE9FE', text: '#7C3AED' },
+  externo:     { bg: '#D1FAE5', text: '#059669' },
+  sistemico:   { bg: '#FEE2E2', text: '#DC2626' },
+}
+
+const CAT_LABEL: Record<string, string> = {
+  operacional: 'Operacional',
+  comercial:   'Comercial',
+  externo:     'Externo',
+  sistemico:   'Sistêmico',
+}
+
+function fmtData(d: string) {
+  const p = d.split('-')
+  return p.length >= 3 ? `${p[2]}/${p[1]}/${p[0]}` : d
+}
+
+function GatilhoContextoBlock({ ctx }: { ctx: GatilhoContexto }) {
+  const [expand5p, setExpand5p] = useState(false)
+  const filled5p = ctx.cinco_porques?.filter(p => p.trim()) ?? []
+  const catEstilo = ctx.categoria ? CAT_ESTILO[ctx.categoria] : null
+
+  return (
+    <div className="mt-3 border border-[#003087]/12 rounded-lg bg-[#003087]/[0.025] overflow-hidden">
+      {/* Cabeçalho */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#003087]/10 flex-wrap">
+        <span className="text-[10px] font-bold text-[#003087] bg-[#003087]/10 px-2 py-0.5 rounded-full uppercase tracking-wide">
+          🎯 Origem Gatilho
+        </span>
+        <span className="text-xs text-gray-500">{TIPO_LABEL[ctx.tipo]}</span>
+        <span className="text-gray-300 text-xs">·</span>
+        <span className="text-xs text-gray-500">{fmtData(ctx.data_rota)}</span>
+        {ctx.motorista && (
+          <>
+            <span className="text-gray-300 text-xs">·</span>
+            <span className="text-xs font-medium text-gray-600">{ctx.motorista}</span>
+          </>
+        )}
+        {catEstilo && (
+          <span
+            className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ml-auto"
+            style={{ backgroundColor: catEstilo.bg, color: catEstilo.text }}
+          >
+            {CAT_LABEL[ctx.categoria!]}
+          </span>
+        )}
+      </div>
+
+      {/* Corpo */}
+      <div className="px-3 py-2.5 space-y-2">
+        {/* Desvio */}
+        <div className="flex items-center gap-3 text-xs text-gray-500">
+          <span>
+            Devoluções: <strong className="text-red-600">{ctx.devs_dia}</strong>
+          </span>
+          <span className="text-gray-300">|</span>
+          <span>
+            Limiar: <strong className="text-gray-700">{ctx.limiar}</strong>
+          </span>
+          <span className="text-gray-300">|</span>
+          <span>
+            Δ: <strong className="text-red-600">+{(ctx.devs_dia - ctx.limiar).toFixed(1)}</strong>
+          </span>
+        </div>
+
+        {/* Responsável */}
+        {ctx.responsavel && (
+          <p className="text-xs text-gray-600">
+            <span className="font-medium text-gray-500">Responsável: </span>{ctx.responsavel}
+          </p>
+        )}
+
+        {/* Relato */}
+        <p className="text-xs text-gray-700 leading-relaxed">
+          <span className="font-medium text-gray-500">Relato: </span>{ctx.relato}
+        </p>
+
+        {/* 5 Porquês */}
+        {filled5p.length > 0 && (
+          <div>
+            <button
+              type="button"
+              onClick={() => setExpand5p(v => !v)}
+              className="flex items-center gap-1.5 text-xs font-semibold text-[#003087] hover:text-[#001a5c] transition-colors"
+            >
+              {expand5p ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              5 Porquês ({filled5p.length} {filled5p.length === 1 ? 'causa' : 'causas'})
+            </button>
+            {expand5p && (
+              <ol className="mt-2 space-y-1.5 border-l-2 border-[#003087]/20 pl-3">
+                {filled5p.map((p, i) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="w-4 h-4 rounded-full bg-[#003087]/10 text-[#003087] text-[9px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                      {i + 1}
+                    </span>
+                    <p className="text-xs text-gray-700 leading-relaxed">{p}</p>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 const PRIORIDADE_COR: Record<string, string> = {
   critica:       '#EF4444',
@@ -189,6 +304,9 @@ export function PlanoAcaoClient({ acoes }: Props) {
                       )}
                     </div>
                     <p className="text-gray-700 text-sm leading-relaxed">{acao.descricao}</p>
+                    {acao.gatilho_contexto && (
+                      <GatilhoContextoBlock ctx={acao.gatilho_contexto} />
+                    )}
                     <div className="flex items-center gap-4 mt-3 text-xs text-gray-400">
                       {acao.responsavel && <span>{acao.responsavel}</span>}
                       {acao.prazo && (

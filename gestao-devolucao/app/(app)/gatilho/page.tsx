@@ -26,6 +26,18 @@ export type GatilhoMotorista = {
   periodo_ref:   string
 }
 
+export type GatilhoRelato = {
+  motorista:     string
+  data_rota:     string
+  tipo:          'total' | 'fechado' | 'geral'
+  status:        'relatado' | 'em_acompanhamento' | 'concluido'
+  relato:        string
+  responsavel:   string | null
+  criado_em:     string
+  cinco_porques: string[] | null
+  categoria:     string | null
+}
+
 function toGatilhoDia(r: any): GatilhoDia {
   return {
     data_rota:   String(r.data_rota),
@@ -65,11 +77,16 @@ export default async function GatilhoPage({
     { data: totalRaw,   error: errTotal   },
     { data: fechadoRaw, error: errFechado },
     { data: periodos },
+    { data: relatosRaw },
   ] = await Promise.all([
     supabase.rpc('resumo_gatilho_geral',      { p_periodo: p }),
     supabase.rpc('resumo_gatilho_motoristas', { p_periodo: p, p_tipo: 'total' }),
     supabase.rpc('resumo_gatilho_motoristas', { p_periodo: p, p_tipo: 'pdv_fechado' }),
     supabase.rpc('periodos_disponiveis'),
+    supabase
+      .from('gatilho_relato')
+      .select('motorista, data_rota, tipo, status, relato, responsavel, criado_em, cinco_porques, categoria')
+      .order('criado_em', { ascending: false }),
   ])
 
   if (errGeral)   return <ErroRPC nome="resumo_gatilho_geral" />
@@ -79,6 +96,13 @@ export default async function GatilhoPage({
   const geral:   GatilhoDia[]       = (geralRaw   ?? []).map(toGatilhoDia)
   const total:   GatilhoMotorista[] = (totalRaw   ?? []).map(toGatilhoMotorista)
   const fechado: GatilhoMotorista[] = (fechadoRaw ?? []).map(toGatilhoMotorista)
+
+  // Mapa de relatos: chave = `${motorista}|${data_rota}|${tipo}` → relato mais recente
+  const relatos: Record<string, GatilhoRelato> = {}
+  for (const r of (relatosRaw ?? []) as GatilhoRelato[]) {
+    const key = `${r.motorista}|${r.data_rota}|${r.tipo}`
+    if (!relatos[key]) relatos[key] = r   // já ordenado por criado_em desc → primeiro = mais recente
+  }
 
   const periodoRef = geral[0]?.periodo_ref ?? total[0]?.periodo_ref ?? null
 
@@ -103,6 +127,7 @@ export default async function GatilhoPage({
         geral={geral}
         total={total}
         fechado={fechado}
+        relatos={relatos}
         initialTab={tab ?? 'geral'}
       />
     </div>

@@ -147,6 +147,10 @@ CREATE TABLE IF NOT EXISTS public.plano_acao (
   atualizado_em       timestamptz
 );
 
+-- Contexto estruturado do gatilho que originou o item (opcional)
+ALTER TABLE public.plano_acao
+  ADD COLUMN IF NOT EXISTS gatilho_contexto jsonb DEFAULT NULL;
+
 ALTER TABLE public.plano_acao ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "auth_all"    ON public.plano_acao;
 DROP POLICY IF EXISTS "owner_only"  ON public.plano_acao;
@@ -155,6 +159,56 @@ CREATE POLICY "owner_only" ON public.plano_acao
   USING     (user_id = auth.uid())
   WITH CHECK (user_id = auth.uid());
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.plano_acao TO authenticated, service_role;
+
+
+-- 6. gatilho_relato — registro de relatos por estouro de gatilho individual e geral
+--    devs_dia / limiar são numeric para suportar tanto contagens (int) quanto percentuais (pct_dev %)
+--    tipo 'geral' usa motorista = '' (vazio) e valores em percentual
+CREATE TABLE IF NOT EXISTS public.gatilho_relato (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     uuid NOT NULL,
+  motorista   text NOT NULL DEFAULT '',
+  data_rota   date NOT NULL,
+  tipo        text NOT NULL CHECK (tipo IN ('total', 'fechado', 'geral')),
+  devs_dia    numeric(10,4) NOT NULL,
+  limiar      numeric(10,4) NOT NULL,
+  relato      text NOT NULL,
+  responsavel text,
+  status      text NOT NULL DEFAULT 'relatado'
+                   CHECK (status IN ('relatado', 'em_acompanhamento', 'concluido')),
+  criado_em   timestamptz NOT NULL DEFAULT now()
+);
+
+-- Migração: se a tabela já existia com tipos antigos, ajusta (idempotente)
+ALTER TABLE public.gatilho_relato
+  ALTER COLUMN devs_dia TYPE numeric(10,4) USING devs_dia::numeric,
+  ALTER COLUMN limiar    TYPE numeric(10,4) USING limiar::numeric;
+ALTER TABLE public.gatilho_relato
+  DROP CONSTRAINT IF EXISTS gatilho_relato_tipo_check;
+ALTER TABLE public.gatilho_relato
+  ADD CONSTRAINT gatilho_relato_tipo_check CHECK (tipo IN ('total', 'fechado', 'geral'));
+
+-- 5 Porquês: análise de causa raiz opcional por estouro
+ALTER TABLE public.gatilho_relato
+  ADD COLUMN IF NOT EXISTS cinco_porques jsonb DEFAULT NULL;
+
+-- Categoria da causa raiz (operacional | comercial | externo | sistemico)
+ALTER TABLE public.gatilho_relato
+  ADD COLUMN IF NOT EXISTS categoria text DEFAULT NULL;
+ALTER TABLE public.gatilho_relato
+  DROP CONSTRAINT IF EXISTS gatilho_relato_categoria_check;
+ALTER TABLE public.gatilho_relato
+  ADD CONSTRAINT gatilho_relato_categoria_check
+    CHECK (categoria IS NULL OR categoria IN ('operacional', 'comercial', 'externo', 'sistemico'));
+-- Armazena array de strings ["resp1","resp2",...] com apenas as respostas preenchidas
+
+ALTER TABLE public.gatilho_relato ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "owner_only" ON public.gatilho_relato;
+CREATE POLICY "owner_only" ON public.gatilho_relato
+  FOR ALL TO authenticated
+  USING     (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.gatilho_relato TO authenticated, service_role;
 
 
 -- ================================================================
@@ -169,6 +223,8 @@ CREATE INDEX IF NOT EXISTS idx_dev_status_final       ON public.devolucoes(statu
 CREATE INDEX IF NOT EXISTS idx_dev_codigo_pdv         ON public.devolucoes(codigo_pdv);
 CREATE INDEX IF NOT EXISTS idx_dev_periodo_motorista  ON public.devolucoes(periodo, motorista);
 CREATE INDEX IF NOT EXISTS idx_dev_importacao         ON public.devolucoes(importacao_id);
+CREATE INDEX IF NOT EXISTS idx_relato_user_tipo       ON public.gatilho_relato(user_id, tipo);
+CREATE INDEX IF NOT EXISTS idx_relato_motorista_data  ON public.gatilho_relato(motorista, data_rota);
 
 
 -- ================================================================
@@ -903,8 +959,10 @@ $$;
 -- ================================================================
 -- 24. resumo_gatilho_motoristas - breakdown diario por motorista (numerico)
 -- Retorna 1 linha por (motorista, dia) com contagem absoluta de devoluções.
--- Stats (media_prev, desvio_prev) calculados sobre pares (motorista, dia)
--- do mês anterior com dev > 0, excluindo outliers P95.
+-- Stats por motorista: media_prev/desvio_prev calculados sobre os dias do
+-- mês anterior em que aquele motorista teve dev > 0, excluindo outliers P95
+-- individual. Fallback para stats de frota quando o motorista tem < 3 dias
+-- de histórico (desvio individual seria não-significativo).
 -- ================================================================
 DROP FUNCTION IF EXISTS resumo_gatilho_motoristas(text, text);
 CREATE OR REPLACE FUNCTION resumo_gatilho_motoristas(
@@ -937,11 +995,11 @@ BEGIN
 
   RETURN QUERY
   WITH prev_raw AS (
-    -- Contagem por (motorista, dia) no mes anterior
+    -- Contagem por (motorista, dia) no mês anterior
     SELECT
       d.motorista,
       d.data_rota,
-      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                            AS dev_total,
+      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                             AS dev_total,
       COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo = 'PDV fechado')::bigint AS dev_fechado
     FROM devolucoes d
     WHERE d.periodo = v_mes_prev
@@ -949,42 +1007,58 @@ BEGIN
     GROUP BY d.motorista, d.data_rota
   ),
   prev_sel AS (
-    -- Seleciona metrica e exclui dias sem devolucao (zeros)
-    SELECT CASE WHEN p_tipo = 'pdv_fechado' THEN pr.dev_fechado ELSE pr.dev_total END AS dev_dia
+    -- Inclui motorista para permitir cálculo individual; exclui zeros
+    SELECT
+      pr.motorista,
+      CASE WHEN p_tipo = 'pdv_fechado' THEN pr.dev_fechado ELSE pr.dev_total END AS dev_dia
     FROM prev_raw pr
     WHERE (CASE WHEN p_tipo = 'pdv_fechado' THEN pr.dev_fechado ELSE pr.dev_total END) > 0
   ),
-  p95 AS (
-    SELECT COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY ps.dev_dia), 0) AS limite
-    FROM prev_sel ps
-  ),
-  prev_filtrado AS (
-    -- Remove outliers acima do P95
-    SELECT ps.dev_dia
-    FROM prev_sel ps CROSS JOIN p95
-    WHERE ps.dev_dia <= p95.limite
-  ),
-  stats AS (
+  -- ── Stats por motorista ────────────────────────────────────────────────────
+  p95_mot AS (
+    -- P95 individual (evita que um dia extremo distorça o baseline do motorista)
     SELECT
-      COALESCE(AVG(dev_dia), 0)         AS media,
-      COALESCE(STDDEV_SAMP(dev_dia), 0) AS desvio
-    FROM prev_filtrado
+      motorista,
+      COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY dev_dia), 0) AS limite
+    FROM prev_sel
+    GROUP BY motorista
   ),
+  prev_filtrado_mot AS (
+    SELECT ps.motorista, ps.dev_dia
+    FROM prev_sel ps
+    JOIN p95_mot pm ON pm.motorista = ps.motorista
+    WHERE ps.dev_dia <= pm.limite
+  ),
+  stats_mot AS (
+    SELECT
+      motorista,
+      COUNT(*)                           AS n_dias,
+      COALESCE(AVG(dev_dia),         0) AS media,
+      COALESCE(STDDEV_SAMP(dev_dia), 0) AS desvio
+    FROM prev_filtrado_mot
+    GROUP BY motorista
+  ),
+  -- ── Stats de frota (fallback para motoristas com < 3 dias de histórico) ───
+  fleet_stats AS (
+    SELECT
+      COALESCE(AVG(dev_dia),         0) AS media,
+      COALESCE(STDDEV_SAMP(dev_dia), 0) AS desvio
+    FROM prev_filtrado_mot        -- mesma base já filtrada por P95 individual
+  ),
+  -- ── Mês atual ─────────────────────────────────────────────────────────────
   atual_raw AS (
-    -- Contagem por (motorista, dia) no mes atual
     SELECT
       d.motorista,
       d.data_rota,
-      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                            AS dev_total,
+      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                             AS dev_total,
       COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo = 'PDV fechado')::bigint AS dev_fechado,
-      COUNT(*)::bigint                                                                   AS fat
+      COUNT(*)::bigint                                                                    AS fat
     FROM devolucoes d
     WHERE d.periodo LIKE v_mes_atual || '%'
       AND d.motorista IS NOT NULL AND d.motorista != ''
     GROUP BY d.motorista, d.data_rota
   ),
   atual_sel AS (
-    -- Seleciona metrica; inclui apenas dias com ao menos 1 devolucao
     SELECT
       ar.motorista,
       ar.data_rota,
@@ -999,12 +1073,14 @@ BEGIN
     COALESCE(m.nome, 'cod. ' || ac.motorista)::text,
     ac.dev_dia,
     ac.fat,
-    ROUND(s.media, 2),
-    ROUND(s.desvio, 2),
+    -- stats individuais se ≥ 3 dias de histórico; fallback para frota
+    ROUND(CASE WHEN sm.n_dias >= 3 THEN sm.media  ELSE fs.media  END, 2) AS media_prev,
+    ROUND(CASE WHEN sm.n_dias >= 3 THEN sm.desvio ELSE fs.desvio END, 2) AS desvio_prev,
     v_mes_prev
   FROM atual_sel ac
-  CROSS JOIN stats s
-  LEFT JOIN motoristas m ON m.codigo = ac.motorista
+  CROSS JOIN fleet_stats fs
+  LEFT JOIN stats_mot    sm ON sm.motorista = ac.motorista
+  LEFT JOIN motoristas    m ON  m.codigo    = ac.motorista
   ORDER BY ac.data_rota DESC, ac.dev_dia DESC;
 END;
 $$;

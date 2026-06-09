@@ -1,17 +1,20 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useTransition, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import {
   ComposedChart, Bar, Cell, ReferenceLine,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
-import type { GatilhoDia, GatilhoMotorista } from './page'
+import type { GatilhoDia, GatilhoMotorista, GatilhoRelato } from './page'
+import { criarRelato, type RelatoInput } from './actions'
 
 interface Props {
   geral:      GatilhoDia[]
   total:      GatilhoMotorista[]
   fechado:    GatilhoMotorista[]
+  relatos:    Record<string, GatilhoRelato>
   initialTab: string
 }
 
@@ -32,6 +35,16 @@ function fmtData(d: string) {
   return p.length >= 3 ? `${p[2]}/${p[1]}` : d
 }
 
+/** Arredonda para cima apenas no modo 2σ — valor oficial para gestão. */
+function applyLimiar(raw: number, sigma: number): number {
+  return sigma === 2.0 ? Math.ceil(raw) : raw
+}
+
+/** Formata limiar: inteiro sem decimais, float com 1 casa. */
+function fmtLimiar(v: number): string {
+  return Number.isInteger(v) ? String(v) : v.toFixed(1)
+}
+
 type Zona = 'critica' | 'atencao' | 'normal'
 
 function getZona(valor: number, media: number, desvio: number, sigma: number): Zona {
@@ -44,6 +57,49 @@ const ZONA: Record<Zona, { label: string; bg: string; text: string; rowBg: strin
   critica: { label: 'Crítica', bg: '#FEE2E2', text: '#DC2626', rowBg: '#FFF5F5' },
   atencao: { label: 'Atenção', bg: '#FEF3C7', text: '#D97706', rowBg: '#FFFDF0' },
   normal:  { label: 'Normal',  bg: '#D1FAE5', text: '#059669', rowBg: ''        },
+}
+
+const STATUS_RELATO: Record<GatilhoRelato['status'], { label: string; bg: string; text: string }> = {
+  relatado:          { label: 'Relatado',      bg: '#D1FAE5', text: '#059669' },
+  em_acompanhamento: { label: 'Em acomp.',     bg: '#FEF3C7', text: '#D97706' },
+  concluido:         { label: 'Concluído',     bg: '#DBEAFE', text: '#2563EB' },
+}
+
+const CATEGORIA: Record<string, { label: string; bg: string; text: string }> = {
+  operacional: { label: 'Operacional', bg: '#DBEAFE', text: '#1D4ED8' },
+  comercial:   { label: 'Comercial',   bg: '#EDE9FE', text: '#7C3AED' },
+  externo:     { label: 'Externo',     bg: '#D1FAE5', text: '#059669' },
+  sistemico:   { label: 'Sistêmico',   bg: '#FEE2E2', text: '#DC2626' },
+}
+
+// ── Helpers SLA ───────────────────────────────────────────────────────────────
+
+/** Dias corridos desde a data da rota até hoje */
+function diasPendente(data_rota: string): number {
+  const [y, m, d] = data_rota.split('-').map(Number)
+  const rota = new Date(y, m - 1, d)
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0)
+  return Math.max(0, Math.floor((hoje.getTime() - rota.getTime()) / 86_400_000))
+}
+
+function corSLA(dias: number): { bg: string; text: string } {
+  if (dias <= 1) return { bg: '#D1FAE5', text: '#059669' }
+  if (dias <= 3) return { bg: '#FEF3C7', text: '#D97706' }
+  return { bg: '#FEE2E2', text: '#DC2626' }
+}
+
+// ── Export CSV ────────────────────────────────────────────────────────────────
+
+function baixarCSV(nome: string, linhas: (string | number)[][]) {
+  const bom      = '﻿'
+  const csv      = bom + linhas.map(l => l.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const blob     = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url      = URL.createObjectURL(blob)
+  const a        = document.createElement('a')
+  a.href         = url
+  a.download     = nome
+  a.click()
+  URL.revokeObjectURL(url)
 }
 
 function ZonaBadge({ zona }: { zona: Zona }) {
@@ -99,11 +155,12 @@ function TooltipDia({ active, payload }: any) {
 
 type Ofensor = { motorista: string; nome: string; dias: number; piorDia: number; dataPior: string }
 
-function TopOfensores({ dados, gatilhoNum }: { dados: GatilhoMotorista[]; gatilhoNum: number }) {
+function TopOfensores({ dados, sigma }: { dados: GatilhoMotorista[]; sigma: number }) {
   const top: Ofensor[] = useMemo(() => {
     const mapa = new Map<string, Ofensor>()
     for (const m of dados) {
-      if (m.devs_dia <= gatilhoNum) continue
+      const limiar = applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
+      if (m.devs_dia <= limiar) continue
       const ex = mapa.get(m.motorista)
       if (!ex) {
         mapa.set(m.motorista, { motorista: m.motorista, nome: m.nome_motorista, dias: 1, piorDia: m.devs_dia, dataPior: m.data_rota })
@@ -117,7 +174,7 @@ function TopOfensores({ dados, gatilhoNum }: { dados: GatilhoMotorista[]; gatilh
       }
     }
     return [...mapa.values()].sort((a, b) => b.dias - a.dias || b.piorDia - a.piorDia).slice(0, 5)
-  }, [dados, gatilhoNum])
+  }, [dados, sigma])
 
   if (top.length === 0) return null
   return (
@@ -149,46 +206,736 @@ function TopOfensores({ dados, gatilhoNum }: { dados: GatilhoMotorista[]; gatilh
   )
 }
 
-// ── TabMotoristas ─────────────────────────────────────────────────────────────
-interface TabMotoristaProps {
-  dados:       GatilhoMotorista[]
-  filtrados:   GatilhoMotorista[]
-  quase:       string[]
-  gatilhoNum:  number
-  mediaN:      number
-  desvioN:     number
-  sigma:       number
-  periodoRef:  string
-  busca:       string
-  soEstouro:   boolean
-  onBusca:     (v: string) => void
-  onSoEstouro: (v: boolean) => void
+// ── helpers 5 Porquês ────────────────────────────────────────────────────────
+
+function Popover5P({ porques }: { porques: string[] }) {
+  const [open, setOpen] = useState(false)
+  const [pos,  setPos]  = useState({ top: 0, left: 0 })
+  const ref = useRef<HTMLSpanElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [open])
+
+  function handleToggle(e: React.MouseEvent) {
+    e.stopPropagation()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    // Posiciona abaixo do ícone; ajusta para não sair da tela pela direita
+    const left = Math.min(rect.left, window.innerWidth - 300)
+    setPos({ top: rect.bottom + 6, left })
+    setOpen(v => !v)
+  }
+
+  const filled = porques.filter(p => p.trim())
+
+  return (
+    <span ref={ref} className="inline-block">
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="cursor-pointer select-none text-sm leading-none hover:scale-110 transition-transform"
+        aria-label="Ver análise 5 Porquês"
+      >
+        🔍
+      </button>
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed z-[300] bg-white border border-gray-200 rounded-xl shadow-2xl p-4 w-72"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs font-bold text-[#003087] uppercase tracking-wider">5 Porquês · Causa Raiz</p>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              className="text-gray-400 hover:text-gray-600 text-base leading-none"
+            >
+              ✕
+            </button>
+          </div>
+          <ol className="space-y-2.5">
+            {filled.map((p, i) => (
+              <li key={i} className="flex gap-2.5">
+                <span className="w-5 h-5 rounded-full bg-[#003087]/10 text-[#003087] text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                  {i + 1}
+                </span>
+                <p className="text-xs text-gray-700 leading-relaxed">{p}</p>
+              </li>
+            ))}
+          </ol>
+        </div>,
+        document.body
+      )}
+    </span>
+  )
 }
 
-function TabMotoristas({
-  dados, filtrados, quase,
-  gatilhoNum, mediaN, desvioN,
-  sigma, periodoRef, busca, soEstouro,
-  onBusca, onSoEstouro,
-}: TabMotoristaProps) {
-  const estouros       = dados.filter(m => m.devs_dia > gatilhoNum)
-  const motoristasUniq = new Set(estouros.map(m => m.motorista)).size
-  const diasUniq       = new Set(estouros.map(m => m.data_rota)).size
+function CincoPorques({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  // Exibe P(i+1) apenas quando P(i) já tem conteúdo — progressão obrigada
+  const emptyIdx  = value.findIndex(p => !p.trim())
+  const showCount = emptyIdx === -1 ? 5 : Math.min(emptyIdx + 1, 5)
+
+  return (
+    <div className="space-y-3 border-l-2 border-[#003087]/20 pl-3 pt-1">
+      {Array.from({ length: showCount }, (_, i) => {
+        const prev          = i > 0 ? value[i - 1].trim() : ''
+        const prevTruncated = prev.length > 55 ? `${prev.slice(0, 55)}…` : prev
+        return (
+          <div key={i}>
+            <label className="block text-xs font-semibold text-[#003087]/70 mb-1">
+              P{i + 1} — {i === 0 ? 'Por que o estouro aconteceu?' : `Por que "${prevTruncated}"?`}
+            </label>
+            <textarea
+              value={value[i]}
+              onChange={e => onChange(value.map((v, j) => (j === i ? e.target.value : v)))}
+              rows={2}
+              placeholder={i < 4 ? `Causa ${i + 1} de 5…` : 'Causa raiz identificada'}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none resize-none"
+            />
+          </div>
+        )
+      })}
+      {showCount === 5 && value[4].trim() && (
+        <p className="text-xs text-emerald-600 font-semibold flex items-center gap-1.5">
+          <span>✓</span> Causa raiz identificada em P5
+        </p>
+      )}
+    </div>
+  )
+}
+
+// ── RelatoModal ──────────────────────────────────────────────────────────────
+
+function RelatoModal({
+  m, limiar, tipo, onClose,
+}: {
+  m:      GatilhoMotorista
+  limiar: number
+  tipo:   'total' | 'fechado'
+  onClose: () => void
+}) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [relato,      setRelato]      = useState('')
+  const [responsavel, setResponsavel] = useState('')
+  const [status,      setStatus]      = useState<GatilhoRelato['status']>('relatado')
+  const [gerarAcao,   setGerarAcao]   = useState(false)
+  const [erro,        setErro]        = useState<string | null>(null)
+  const [aplicar5p,   setAplicar5p]   = useState(false)
+  const [porques,     setPorques]     = useState<string[]>(['', '', '', '', ''])
+  const [categoria,   setCategoria]   = useState('')
+
+  const delta = m.devs_dia - limiar
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!relato.trim()) return
+    setErro(null)
+    startTransition(async () => {
+      const result = await criarRelato({
+        motorista:   m.motorista,
+        data_rota:   m.data_rota,
+        tipo,
+        devs_dia:    m.devs_dia,
+        limiar,
+        relato:      relato.trim(),
+        responsavel: responsavel.trim() || undefined,
+        status,
+        gerarAcao,
+        cincoP:      aplicar5p ? porques : undefined,
+        categoria:   (categoria || undefined) as RelatoInput['categoria'],
+      })
+      if (result.error) { setErro(result.error); return }
+      router.refresh()
+      onClose()
+    })
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[88vh]"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bg-[#003087] text-white px-6 py-4 shrink-0">
+          <p className="text-xs font-medium text-blue-200 uppercase tracking-wider mb-0.5">
+            Relato de estouro — {tipo === 'total' ? 'Dev. Total' : 'PDV Fechado'}
+          </p>
+          <h3 className="font-bold text-lg leading-tight">{m.nome_motorista}</h3>
+          <p className="text-blue-200 text-sm">{fmtData(m.data_rota)} · {m.motorista}</p>
+        </div>
+
+        {/* Info pills */}
+        <div className="px-6 py-3 bg-red-50 border-b border-red-100 flex gap-5 text-sm shrink-0">
+          <span className="text-gray-600">Dev. Dia: <strong className="text-red-600">{m.devs_dia}</strong></span>
+          <span className="text-gray-600">Limiar: <strong className="text-gray-800">{limiar}</strong></span>
+          <span className="text-gray-600">Δ: <strong className="text-red-600">+{fmtLimiar(delta)}</strong></span>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+              Relato *
+            </label>
+            <textarea
+              value={relato}
+              onChange={e => setRelato(e.target.value)}
+              rows={4}
+              required
+              placeholder="Descreva o que foi apurado, causa identificada, ação tomada..."
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-[#003087] focus:outline-none resize-none"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+                Responsável
+              </label>
+              <input
+                type="text"
+                value={responsavel}
+                onChange={e => setResponsavel(e.target.value)}
+                placeholder="Nome do responsável"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+                Status
+              </label>
+              <select
+                value={status}
+                onChange={e => setStatus(e.target.value as GatilhoRelato['status'])}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none bg-white"
+              >
+                <option value="relatado">Relatado</option>
+                <option value="em_acompanhamento">Em acompanhamento</option>
+                <option value="concluido">Concluído</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Categoria da causa raiz */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+              Categoria da causa raiz
+            </label>
+            <select
+              value={categoria}
+              onChange={e => setCategoria(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none bg-white"
+            >
+              <option value="">Não categorizado</option>
+              <option value="operacional">Operacional</option>
+              <option value="comercial">Comercial</option>
+              <option value="externo">Externo</option>
+              <option value="sistemico">Sistêmico</option>
+            </select>
+          </div>
+
+          {/* Checkbox gerar plano de ação */}
+          <label className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={gerarAcao}
+              onChange={e => setGerarAcao(e.target.checked)}
+              className="mt-0.5 accent-[#003087]"
+            />
+            <div>
+              <p className="text-sm font-semibold text-gray-700">Gerar item no Plano de Ação</p>
+              <p className="text-xs text-gray-500 mt-0.5">Cria uma ação de prioridade alta vinculada a este estouro</p>
+            </div>
+          </label>
+
+          {/* 5 Porquês — análise de causa raiz */}
+          <div className="border border-[#003087]/10 rounded-lg overflow-hidden">
+            <label className="flex items-center gap-3 p-3 cursor-pointer select-none bg-blue-50/60 hover:bg-blue-50 transition-colors">
+              <input
+                type="checkbox"
+                checked={aplicar5p}
+                onChange={e => setAplicar5p(e.target.checked)}
+                className="accent-[#003087]"
+              />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-700">Aplicar análise 5 Porquês</p>
+                <p className="text-xs text-gray-500 mt-0.5">Identifica a causa raiz progressivamente — pergunta por pergunta</p>
+              </div>
+              <span className="text-base select-none">🔍</span>
+            </label>
+            {aplicar5p && (
+              <div className="px-3 pb-3 pt-2">
+                <CincoPorques value={porques} onChange={setPorques} />
+              </div>
+            )}
+          </div>
+
+          {erro && (
+            <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{erro}</p>
+          )}
+
+          <div className="flex gap-3 pt-1">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isPending}
+              className="flex-1 border border-gray-200 rounded-lg py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+            >
+              Cancelar
+            </button>
+            <button
+              type="submit"
+              disabled={isPending || !relato.trim()}
+              className="flex-1 bg-[#003087] text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-[#002070] transition-colors disabled:opacity-50"
+            >
+              {isPending ? 'Salvando...' : 'Salvar Relato'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── RelatoGeralModal ─────────────────────────────────────────────────────────
+
+function RelatoGeralModal({ d, gatilho, onClose }: { d: GatilhoDia; gatilho: number; onClose: () => void }) {
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  const [relato,      setRelato]      = useState('')
+  const [responsavel, setResponsavel] = useState('')
+  const [status,      setStatus]      = useState<GatilhoRelato['status']>('relatado')
+  const [gerarAcao,   setGerarAcao]   = useState(false)
+  const [erro,        setErro]        = useState<string | null>(null)
+  const [aplicar5p,   setAplicar5p]   = useState(false)
+  const [porques,     setPorques]     = useState<string[]>(['', '', '', '', ''])
+  const [categoriaG,  setCategoriaG]  = useState('')
+
+  const delta = d.pct_dev - gatilho
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!relato.trim()) return
+    setErro(null)
+    startTransition(async () => {
+      const result = await criarRelato({
+        motorista:   '',
+        data_rota:   d.data_rota,
+        tipo:        'geral',
+        devs_dia:    d.pct_dev,
+        limiar:      gatilho,
+        relato:      relato.trim(),
+        responsavel: responsavel.trim() || undefined,
+        status,
+        gerarAcao,
+        cincoP:      aplicar5p ? porques : undefined,
+        categoria:   (categoriaG || undefined) as RelatoInput['categoria'],
+      })
+      if (result.error) { setErro(result.error); return }
+      router.refresh()
+      onClose()
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[88vh]" onClick={e => e.stopPropagation()}>
+        <div className="bg-[#003087] text-white px-6 py-4 shrink-0">
+          <p className="text-xs font-medium text-blue-200 uppercase tracking-wider mb-0.5">
+            Relato de estouro — Devolução Geral (frota)
+          </p>
+          <h3 className="font-bold text-lg leading-tight">{fmtData(d.data_rota)}</h3>
+          <p className="text-blue-200 text-sm">{d.pdvs_fat.toLocaleString()} faturados · {d.pdvs_dev} devolvidos</p>
+        </div>
+        <div className="px-6 py-3 bg-red-50 border-b border-red-100 flex gap-5 text-sm shrink-0">
+          <span className="text-gray-600">% Dev: <strong className="text-red-600">{d.pct_dev.toFixed(2)}%</strong></span>
+          <span className="text-gray-600">Gatilho: <strong className="text-gray-800">{gatilho.toFixed(2)}%</strong></span>
+          <span className="text-gray-600">Δ: <strong className="text-red-600">+{delta.toFixed(2)}%</strong></span>
+        </div>
+        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Relato *</label>
+            <textarea
+              value={relato}
+              onChange={e => setRelato(e.target.value)}
+              rows={4}
+              required
+              placeholder="Descreva o contexto do estouro de frota, causas e ações tomadas..."
+              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-[#003087] focus:outline-none resize-none"
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Responsável</label>
+              <input
+                type="text"
+                value={responsavel}
+                onChange={e => setResponsavel(e.target.value)}
+                placeholder="Nome do responsável"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Status</label>
+              <select
+                value={status}
+                onChange={e => setStatus(e.target.value as GatilhoRelato['status'])}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none bg-white"
+              >
+                <option value="relatado">Relatado</option>
+                <option value="em_acompanhamento">Em acompanhamento</option>
+                <option value="concluido">Concluído</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Categoria da causa raiz */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
+              Categoria da causa raiz
+            </label>
+            <select
+              value={categoriaG}
+              onChange={e => setCategoriaG(e.target.value)}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none bg-white"
+            >
+              <option value="">Não categorizado</option>
+              <option value="operacional">Operacional</option>
+              <option value="comercial">Comercial</option>
+              <option value="externo">Externo</option>
+              <option value="sistemico">Sistêmico</option>
+            </select>
+          </div>
+
+          <label className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg cursor-pointer select-none">
+            <input type="checkbox" checked={gerarAcao} onChange={e => setGerarAcao(e.target.checked)} className="mt-0.5 accent-[#003087]" />
+            <div>
+              <p className="text-sm font-semibold text-gray-700">Gerar item no Plano de Ação</p>
+              <p className="text-xs text-gray-500 mt-0.5">Cria uma ação de prioridade alta para este estouro de frota</p>
+            </div>
+          </label>
+
+          {/* 5 Porquês — análise de causa raiz */}
+          <div className="border border-[#003087]/10 rounded-lg overflow-hidden">
+            <label className="flex items-center gap-3 p-3 cursor-pointer select-none bg-blue-50/60 hover:bg-blue-50 transition-colors">
+              <input
+                type="checkbox"
+                checked={aplicar5p}
+                onChange={e => setAplicar5p(e.target.checked)}
+                className="accent-[#003087]"
+              />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-gray-700">Aplicar análise 5 Porquês</p>
+                <p className="text-xs text-gray-500 mt-0.5">Identifica a causa raiz progressivamente — pergunta por pergunta</p>
+              </div>
+              <span className="text-base select-none">🔍</span>
+            </label>
+            {aplicar5p && (
+              <div className="px-3 pb-3 pt-2">
+                <CincoPorques value={porques} onChange={setPorques} />
+              </div>
+            )}
+          </div>
+
+          {erro && <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{erro}</p>}
+          <div className="flex gap-3 pt-1">
+            <button type="button" onClick={onClose} disabled={isPending}
+              className="flex-1 border border-gray-200 rounded-lg py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50">
+              Cancelar
+            </button>
+            <button type="submit" disabled={isPending || !relato.trim()}
+              className="flex-1 bg-[#003087] text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-[#002070] transition-colors disabled:opacity-50">
+              {isPending ? 'Salvando...' : 'Salvar Relato'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// ── TabGeral ──────────────────────────────────────────────────────────────────
+
+interface TabGeralProps {
+  dados:      GatilhoDia[]
+  gatilho:    number
+  media:      number
+  desvio:     number
+  sigma:      number
+  periodoRef: string
+  relatos:    Record<string, GatilhoRelato>
+}
+
+function TabGeral({ dados, gatilho, media, desvio, sigma, periodoRef, relatos }: TabGeralProps) {
+  const [modalDados, setModalDados] = useState<GatilhoDia | null>(null)
+
+  const geralKey  = (d: GatilhoDia) => `|${d.data_rota}|geral`
+  const geralMax  = Math.max(...dados.map(d => Math.max(d.pct_dev, gatilho)), 1)
+  const estouros  = dados.filter(d => d.pct_dev > gatilho)
+  const semRelato = estouros.filter(d => !relatos[geralKey(d)]).length
+
+  function handleExport() {
+    const header = ['Data', 'Faturados', 'Devolvidos', '% Dev', 'Gatilho %', 'Δ%', 'Zona', 'Status Relato', 'Responsável', 'Categoria', 'Relato', 'P1', 'P2', 'P3', 'P4', 'P5']
+    const linhas = [header, ...dados.map(d => {
+      const rel  = relatos[geralKey(d)]
+      const zona = getZona(d.pct_dev, media, desvio, sigma)
+      const p5   = Array.from({ length: 5 }, (_, i) => rel?.cinco_porques?.[i] ?? '')
+      return [d.data_rota, d.pdvs_fat, d.pdvs_dev, d.pct_dev.toFixed(2), gatilho.toFixed(2), (d.pct_dev - gatilho).toFixed(2), zona, rel?.status ?? '', rel?.responsavel ?? '', rel?.categoria ?? '', rel?.relato ?? '', ...p5]
+    })]
+    baixarCSV(`gatilho-geral-${periodoRef.replace(/\//g, '-')}.csv`, linhas)
+  }
 
   return (
     <div className="space-y-4">
-      {/* Stats banner numérico */}
+      {dados[0] && (
+        <div className="bg-[#FFF8DC] border border-[#F2C800]/40 rounded-xl px-5 py-3 flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
+          <span className="text-gray-600">μ: <strong className="text-[#D4A800]">{media.toFixed(2)}%</strong></span>
+          <span className="text-gray-600">σ: <strong className="text-[#D4A800]">{desvio.toFixed(2)}%</strong></span>
+          <span className="text-gray-600">
+            Gatilho ({sigma}σ): <strong className="text-red-500">{gatilho.toFixed(2)}%</strong>
+          </span>
+          {estouros.length > 0 && semRelato > 0 && (
+            <span className="text-orange-500 text-xs font-semibold self-center">⚠ {semRelato} sem relato</span>
+          )}
+          {estouros.length > 0 && semRelato === 0 && (
+            <span className="text-emerald-600 text-xs font-semibold self-center">✓ todos relatados</span>
+          )}
+          <span className="text-gray-400 text-xs self-center">Referência: {periodoRef}</span>
+          <button
+            onClick={handleExport}
+            className="ml-auto text-xs font-semibold text-[#003087] hover:text-[#0057A8] transition-colors flex items-center gap-1 self-center"
+          >
+            ↓ Exportar CSV
+          </button>
+        </div>
+      )}
+
+      {dados.length > 0 && (
+        <div className="bg-white border border-gray-100 rounded-xl p-4">
+          <p className="text-xs font-medium text-gray-400 mb-3">Evolução diária % Dev vs Gatilho</p>
+          <ResponsiveContainer width="100%" height={160}>
+            <ComposedChart data={dados} margin={{ left: 0, right: 24, top: 4 }}>
+              <CartesianGrid strokeDasharray="4 4" stroke="#F3F4F6" />
+              <XAxis dataKey="data_rota" tickFormatter={fmtData} tick={{ fontSize: 10, fill: '#6B7280' }} />
+              <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 10, fill: '#6B7280' }} domain={[0, Math.ceil(geralMax * 1.2)]} />
+              <Tooltip content={<TooltipDia />} />
+              <ReferenceLine
+                y={gatilho}
+                stroke="#EF4444"
+                strokeDasharray="6 3"
+                strokeWidth={1.5}
+                label={{ value: `${gatilho.toFixed(2)}%`, fill: '#EF4444', fontSize: 10, position: 'insideTopRight' }}
+              />
+              <Bar dataKey="pct_dev" radius={[2, 2, 0, 0]}>
+                {dados.map((d, i) => (
+                  <Cell key={i} fill={d.pct_dev > gatilho ? '#EF4444' : '#0057A8'} fillOpacity={d.pct_dev > gatilho ? 1 : 0.65} />
+                ))}
+              </Bar>
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+        <div className="overflow-auto max-h-[28rem]">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-[#003087] text-white text-xs font-medium">
+                <th className="text-left   py-2.5 px-4">Data</th>
+                <th className="text-right  py-2.5 px-4">Fat.</th>
+                <th className="text-right  py-2.5 px-4">Dev.</th>
+                <th className="text-right  py-2.5 px-4">% Dev</th>
+                <th className="text-left   py-2.5 px-4">Uso do Gatilho</th>
+                <th className="text-center py-2.5 px-4">Zona ABC</th>
+                <th className="text-center py-2.5 px-4">Relato</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dados.map(d => {
+                const zona      = getZona(d.pct_dev, media, desvio, sigma)
+                const c         = ZONA[zona]
+                const isEstouro = d.pct_dev > gatilho
+                const relExist  = relatos[geralKey(d)]
+                const relStatus = relExist ? STATUS_RELATO[relExist.status] : null
+                const dias      = diasPendente(d.data_rota)
+                const sla       = corSLA(dias)
+                const catInfo   = relExist?.categoria ? CATEGORIA[relExist.categoria] : null
+                return (
+                  <tr key={d.data_rota} className="border-b border-gray-50" style={{ backgroundColor: zona !== 'normal' ? c.rowBg : undefined }}>
+                    <td className="py-2.5 px-4 font-semibold text-[#003087]">{fmtData(d.data_rota)}</td>
+                    <td className="py-2.5 px-4 text-right text-gray-400 text-xs">{d.pdvs_fat.toLocaleString()}</td>
+                    <td className="py-2.5 px-4 text-right text-gray-600">{d.pdvs_dev}</td>
+                    <td className="py-2.5 px-4 text-right font-bold" style={{ color: zona === 'critica' ? '#DC2626' : '#003087' }}>
+                      {d.pct_dev.toFixed(2)}%
+                    </td>
+                    <td className="py-2.5 px-4"><UsoBarra valor={d.pct_dev} gatilho={gatilho} /></td>
+                    <td className="py-2.5 px-4 text-center"><ZonaBadge zona={zona} /></td>
+                    <td className="py-2.5 px-4 text-center">
+                      {isEstouro ? (
+                        relStatus ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="inline-flex items-center gap-1">
+                              <span
+                                title={relExist?.relato}
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap cursor-default"
+                                style={{ backgroundColor: relStatus.bg, color: relStatus.text }}
+                              >
+                                ✓ {relStatus.label}
+                              </span>
+                              {relExist?.cinco_porques && relExist.cinco_porques.length > 0 && (
+                                <Popover5P porques={relExist.cinco_porques} />
+                              )}
+                            </span>
+                            {catInfo && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide" style={{ backgroundColor: catInfo.bg, color: catInfo.text }}>
+                                {catInfo.label}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setModalDados(d)}
+                            className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap transition-colors"
+                            style={{ backgroundColor: sla.bg, color: sla.text }}
+                          >
+                            ⚠ Pendente · {dias}d
+                          </button>
+                        )
+                      ) : (
+                        <span className="text-gray-300 text-xs">—</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+              {dados.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-8 text-center text-gray-400 text-sm">
+                    Selecione um mês para calcular o gatilho.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {modalDados && (
+        <RelatoGeralModal d={modalDados} gatilho={gatilho} onClose={() => setModalDados(null)} />
+      )}
+    </div>
+  )
+}
+
+// ── TabMotoristas ─────────────────────────────────────────────────────────────
+interface TabMotoristaProps {
+  dados:        GatilhoMotorista[]
+  filtrados:    GatilhoMotorista[]
+  quase:        string[]
+  /** Limiar mediano calculado no pai (usado no banner e nos KPI cards) */
+  medianLimiar: number
+  sigma:        number
+  periodoRef:   string
+  busca:        string
+  soEstouro:    boolean
+  onBusca:      (v: string) => void
+  onSoEstouro:  (v: boolean) => void
+  /** Tipo da aba — define a chave de lookup no mapa de relatos */
+  tipo:         'total' | 'fechado'
+  /** Mapa de relatos: chave = `${motorista}|${data_rota}|${tipo}` */
+  relatos:      Record<string, GatilhoRelato>
+}
+
+type FiltroRelato = 'todos' | 'sem_relato' | 'com_relato'
+
+function TabMotoristas({
+  dados, filtrados, quase,
+  medianLimiar, sigma, periodoRef,
+  busca, soEstouro, onBusca, onSoEstouro,
+  tipo, relatos,
+}: TabMotoristaProps) {
+  const [filtroRelato, setFiltroRelato] = useState<FiltroRelato>('todos')
+  const [modalDados,   setModalDados]   = useState<{ m: GatilhoMotorista; limiar: number } | null>(null)
+
+  const limiarFn  = (m: GatilhoMotorista) => applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
+  const relatoKey = (m: GatilhoMotorista) => `${m.motorista}|${m.data_rota}|${tipo}`
+
+  // Filtro secundário por status de relato (sobre filtrados já filtrados por busca/estouro)
+  const filtradosVisiveis = useMemo(() => {
+    if (filtroRelato === 'todos') return filtrados
+    return filtrados.filter(m => {
+      if (m.devs_dia <= limiarFn(m)) return false
+      const temRelato = !!relatos[relatoKey(m)]
+      return filtroRelato === 'sem_relato' ? !temRelato : temRelato
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtrados, filtroRelato, relatos, tipo, sigma])
+
+  const estouros       = dados.filter(m => m.devs_dia > limiarFn(m))
+  const motoristasUniq = new Set(estouros.map(m => m.motorista)).size
+  const diasUniq       = new Set(estouros.map(m => m.data_rota)).size
+  const semRelato      = estouros.filter(m => !relatos[relatoKey(m)]).length
+
+  // Mapa de reincidência: motorista → nº de dias em estouro no período
+  const reincMap = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const m of dados) {
+      if (m.devs_dia > limiarFn(m)) map[m.motorista] = (map[m.motorista] ?? 0) + 1
+    }
+    return map
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dados, sigma])
+
+  // Mapa de última conclusão: motorista → data_rota mais recente com relato "concluido"
+  const ultimaConclusaoMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const r of Object.values(relatos)) {
+      if (r.status === 'concluido' && r.motorista && r.tipo === tipo) {
+        if (!map[r.motorista] || r.data_rota > map[r.motorista]) map[r.motorista] = r.data_rota
+      }
+    }
+    return map
+  }, [relatos, tipo])
+
+  function handleExport() {
+    const header = ['Data', 'Motorista', 'Cód.', 'Faturados', 'Devoluções', 'Limiar', 'Δ', 'Zona', 'Reincidências', 'Status Relato', 'Responsável', 'Categoria', 'Relato', 'P1', 'P2', 'P3', 'P4', 'P5']
+    const linhas = [header, ...filtrados.map(m => {
+      const lim  = limiarFn(m)
+      const rel  = relatos[relatoKey(m)]
+      const zona = getZona(m.devs_dia, m.media_prev, m.desvio_prev, sigma)
+      const p5   = Array.from({ length: 5 }, (_, i) => rel?.cinco_porques?.[i] ?? '')
+      return [m.data_rota, m.nome_motorista, m.motorista, m.fat_dia, m.devs_dia, fmtLimiar(lim), fmtLimiar(m.devs_dia - lim), zona, reincMap[m.motorista] ?? 0, rel?.status ?? '', rel?.responsavel ?? '', rel?.categoria ?? '', rel?.relato ?? '', ...p5]
+    })]
+    baixarCSV(`gatilho-${tipo}-${periodoRef.replace(/\//g, '-')}.csv`, linhas)
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Stats banner — limiar mediano da frota como referência */}
       <div className="bg-[#FFF8DC] border border-[#F2C800]/40 rounded-xl px-5 py-3 flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
         <span className="text-gray-600">
-          μ: <strong className="text-[#D4A800]">{mediaN.toFixed(1)} dev/dia</strong>
+          Limiar ({sigma}σ): <strong className="text-red-500">por motorista</strong>
         </span>
         <span className="text-gray-600">
-          σ: <strong className="text-[#D4A800]">{desvioN.toFixed(1)} dev</strong>
-        </span>
-        <span className="text-gray-600">
-          Gatilho ({sigma}σ): <strong className="text-red-500">{Number.isInteger(gatilhoNum) ? gatilhoNum : gatilhoNum.toFixed(2)} dev/dia</strong>
+          Mediano frota: <strong className="text-red-500">{fmtLimiar(medianLimiar)} dev/dia</strong>
         </span>
         <span className="text-gray-400 text-xs self-center">Referência: {periodoRef}</span>
+        <button
+          onClick={handleExport}
+          className="ml-auto text-xs font-semibold text-[#003087] hover:text-[#0057A8] transition-colors flex items-center gap-1 self-center"
+        >
+          ↓ Exportar CSV
+        </button>
       </div>
 
       {/* Resumo de estouro */}
@@ -206,6 +953,18 @@ function TabMotoristas({
             <p className="text-xs text-red-400 font-medium uppercase tracking-wide mb-0.5">Dias com ocorrência</p>
             <p className="text-2xl font-bold text-red-600">{diasUniq}</p>
           </div>
+          {semRelato > 0 && (
+            <div className="border-l border-red-200 pl-6">
+              <p className="text-xs text-red-400 font-medium uppercase tracking-wide mb-0.5">Sem relato</p>
+              <p className="text-2xl font-bold text-red-600">{semRelato}</p>
+            </div>
+          )}
+          {semRelato === 0 && estouros.length > 0 && (
+            <div className="border-l border-emerald-200 pl-6">
+              <p className="text-xs text-emerald-500 font-medium uppercase tracking-wide mb-0.5">Relatos</p>
+              <p className="text-2xl font-bold text-emerald-600">✓ todos</p>
+            </div>
+          )}
         </div>
       ) : dados.length > 0 ? (
         <div className="bg-emerald-50 border border-emerald-100 rounded-xl px-5 py-3 text-sm text-emerald-700 font-medium">
@@ -214,7 +973,7 @@ function TabMotoristas({
       ) : null}
 
       {/* Top ofensores para causa raiz */}
-      <TopOfensores dados={dados} gatilhoNum={gatilhoNum} />
+      <TopOfensores dados={dados} sigma={sigma} />
 
       {/* Alerta precoce */}
       {quase.length > 0 && (
@@ -259,6 +1018,26 @@ function TabMotoristas({
             Todos c/ dev
           </button>
         </div>
+        {/* Filtro por status de relato */}
+        <div className="flex gap-1 bg-gray-100 rounded-lg p-0.5">
+          {(['todos', 'sem_relato', 'com_relato'] as FiltroRelato[]).map(f => (
+            <button
+              key={f}
+              onClick={() => setFiltroRelato(f)}
+              className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                filtroRelato === f
+                  ? f === 'sem_relato'
+                    ? 'bg-orange-500 text-white shadow-sm'
+                    : f === 'com_relato'
+                    ? 'bg-emerald-600 text-white shadow-sm'
+                    : 'bg-[#003087] text-white shadow-sm'
+                  : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              {f === 'todos' ? 'Relato: todos' : f === 'sem_relato' ? '⚠ Sem relato' : '✓ Relatados'}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Tabela de eventos diários */}
@@ -271,16 +1050,28 @@ function TabMotoristas({
                 <th className="text-left   py-2.5 px-4">Motorista</th>
                 <th className="text-right  py-2.5 px-4">Fat. Dia</th>
                 <th className="text-right  py-2.5 px-4">Dev. Dia</th>
-                <th className="text-right  py-2.5 px-4">Δ Gatilho</th>
-                <th className="text-left   py-2.5 px-4">Uso do Gatilho</th>
+                <th className="text-right  py-2.5 px-4">Limiar</th>
+                <th className="text-right  py-2.5 px-4">Δ Limiar</th>
+                <th className="text-left   py-2.5 px-4">Uso</th>
                 <th className="text-center py-2.5 px-4">Zona ABC</th>
+                <th className="text-center py-2.5 px-4">Relato</th>
               </tr>
             </thead>
             <tbody>
-              {filtrados.map((m, i) => {
-                const zona  = getZona(m.devs_dia, mediaN, desvioN, sigma)
-                const c     = ZONA[zona]
-                const delta = m.devs_dia - gatilhoNum
+              {filtradosVisiveis.map((m, i) => {
+                const limiar      = limiarFn(m)
+                const zona        = getZona(m.devs_dia, m.media_prev, m.desvio_prev, sigma)
+                const c           = ZONA[zona]
+                const delta       = m.devs_dia - limiar
+                const isEstouro   = m.devs_dia > limiar
+                const relExist    = relatos[relatoKey(m)]
+                const relStatus   = relExist ? STATUS_RELATO[relExist.status] : null
+                const dias        = diasPendente(m.data_rota)
+                const sla         = corSLA(dias)
+                const reincCount  = reincMap[m.motorista] ?? 0
+                const ultimaConc  = ultimaConclusaoMap[m.motorista]
+                const reincidiu   = isEstouro && !relExist && !!ultimaConc && m.data_rota > ultimaConc
+                const catInfo     = relExist?.categoria ? CATEGORIA[relExist.categoria] : null
                 return (
                   <tr
                     key={`${m.data_rota}-${m.motorista}-${i}`}
@@ -298,6 +1089,11 @@ function TabMotoristas({
                         {m.nome_motorista}
                       </p>
                       <p className="text-gray-400 text-xs">{m.motorista}</p>
+                      {reincCount > 1 && (
+                        <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-orange-600 mt-0.5">
+                          🔁 {reincCount}x reincidente
+                        </span>
+                      )}
                     </td>
                     <td className="py-2.5 px-4 text-right text-gray-400 text-xs">{m.fat_dia.toLocaleString()}</td>
                     <td
@@ -306,41 +1102,98 @@ function TabMotoristas({
                     >
                       {m.devs_dia}
                     </td>
+                    <td className="py-2.5 px-4 text-right text-gray-400 text-xs tabular-nums">
+                      {fmtLimiar(limiar)}
+                    </td>
                     <td
                       className={`py-2.5 px-4 text-right text-xs font-semibold ${delta > 0 ? 'text-red-500' : 'text-emerald-600'}`}
                     >
-                      {delta > 0 ? '+' : ''}{delta}
+                      {delta > 0 ? '+' : ''}{fmtLimiar(delta)}
                     </td>
-                    <td className="py-2.5 px-4"><UsoBarra valor={m.devs_dia} gatilho={gatilhoNum} /></td>
+                    <td className="py-2.5 px-4"><UsoBarra valor={m.devs_dia} gatilho={limiar} /></td>
                     <td className="py-2.5 px-4 text-center"><ZonaBadge zona={zona} /></td>
+                    <td className="py-2.5 px-4 text-center">
+                      {isEstouro ? (
+                        relStatus ? (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span className="inline-flex items-center gap-1">
+                              <span
+                                title={relExist?.relato}
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap cursor-default"
+                                style={{ backgroundColor: relStatus.bg, color: relStatus.text }}
+                              >
+                                ✓ {relStatus.label}
+                              </span>
+                              {relExist?.cinco_porques && relExist.cinco_porques.length > 0 && (
+                                <Popover5P porques={relExist.cinco_porques} />
+                              )}
+                            </span>
+                            {catInfo && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide" style={{ backgroundColor: catInfo.bg, color: catInfo.text }}>
+                                {catInfo.label}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <button
+                              onClick={() => setModalDados({ m, limiar })}
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap transition-colors"
+                              style={{ backgroundColor: sla.bg, color: sla.text }}
+                            >
+                              ⚠ Pendente · {dias}d
+                            </button>
+                            {reincidiu && (
+                              <span className="text-[9px] text-orange-600 font-semibold whitespace-nowrap">↩ reincidiu</span>
+                            )}
+                          </div>
+                        )
+                      ) : (
+                        <span className="text-gray-300 text-xs">—</span>
+                      )}
+                    </td>
                   </tr>
                 )
               })}
-              {filtrados.length === 0 && (
+              {filtradosVisiveis.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-gray-400 text-sm">
-                    {soEstouro
-                      ? 'Nenhum estouro de gatilho no período.'
-                      : dados.length === 0
-                        ? 'Selecione um mês para ver os dados.'
-                        : 'Nenhum motorista encontrado.'}
+                  <td colSpan={9} className="py-8 text-center text-gray-400 text-sm">
+                    {filtroRelato !== 'todos'
+                      ? filtroRelato === 'sem_relato'
+                        ? 'Todos os estouros já foram relatados.'
+                        : 'Nenhum estouro relatado ainda.'
+                      : soEstouro
+                        ? 'Nenhum estouro de gatilho no período.'
+                        : dados.length === 0
+                          ? 'Selecione um mês para ver os dados.'
+                          : 'Nenhum motorista encontrado.'}
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        {filtrados.length > 0 && (
+        {filtradosVisiveis.length > 0 && (
           <div className="px-4 py-2 border-t border-gray-50 text-xs text-gray-400">
-            {filtrados.length} {soEstouro ? 'evento(s) de estouro' : 'dia(s) com devolução'}
+            {filtradosVisiveis.length} {soEstouro ? 'evento(s) de estouro' : 'dia(s) com devolução'}
           </div>
         )}
       </div>
+
+      {/* Modal de relato */}
+      {modalDados && (
+        <RelatoModal
+          m={modalDados.m}
+          limiar={modalDados.limiar}
+          tipo={tipo}
+          onClose={() => setModalDados(null)}
+        />
+      )}
     </div>
   )
 }
 
-export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
+export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Props) {
   const router       = useRouter()
   const pathname     = usePathname()
   const searchParams = useSearchParams()
@@ -362,22 +1215,24 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
   const desvioGeral  = geral[0]?.desvio_prev ?? 0
   const gatilhoGeral = mediaGeral + sigma * desvioGeral
 
-  // Gatilho numérico independente para Dev. Total
-  const mediaTotal   = total[0]?.media_prev   ?? 0
-  const desvioTotal  = total[0]?.desvio_prev  ?? 0
-  const gatilhoTotal = mediaTotal + sigma * desvioTotal
+  // Limiar mediano para Dev. Total (referência visual — cada linha tem seu próprio limiar)
+  const medianLimiarTotal = useMemo(() => {
+    const arr = [...total].map(m => applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)).sort((a, b) => a - b)
+    return arr[Math.floor(arr.length / 2)] ?? 0
+  }, [total, sigma])
 
-  // Gatilho numérico independente para PDV Fechado — arredondado para cima
-  const mediaFechado   = fechado[0]?.media_prev   ?? 0
-  const desvioFechado  = fechado[0]?.desvio_prev  ?? 0
-  const gatilhoFechado = Math.ceil(mediaFechado + sigma * desvioFechado)
+  // Limiar mediano para PDV Fechado (referência visual)
+  const medianLimiarFechado = useMemo(() => {
+    const arr = [...fechado].map(m => applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)).sort((a, b) => a - b)
+    return arr[Math.floor(arr.length / 2)] ?? 0
+  }, [fechado, sigma])
 
   const periodoRef = geral[0]?.periodo_ref ?? total[0]?.periodo_ref ?? '—'
 
   // KPIs
   const diasCrit       = geral.filter(d => d.pct_dev > gatilhoGeral).length
-  const totalEventos   = total.filter(m => m.devs_dia > gatilhoTotal).length
-  const fechadoEventos = fechado.filter(m => m.devs_dia > gatilhoFechado).length
+  const totalEventos   = total.filter(m => m.devs_dia > applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)).length
+  const fechadoEventos = fechado.filter(m => m.devs_dia > applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)).length
 
   // Filtros para aba Dev. Total
   const totalFiltrado = useMemo(() => {
@@ -385,8 +1240,8 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
     const r = busca
       ? total.filter(m => m.nome_motorista.toLowerCase().includes(q) || m.motorista.includes(q))
       : total
-    return soEstouro ? r.filter(m => m.devs_dia > gatilhoTotal) : r
-  }, [total, busca, soEstouro, gatilhoTotal])
+    return soEstouro ? r.filter(m => m.devs_dia > applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)) : r
+  }, [total, busca, soEstouro, sigma])
 
   // Filtros para aba PDV Fechado
   const fechadoFiltrado = useMemo(() => {
@@ -394,132 +1249,72 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
     const r = busca
       ? fechado.filter(m => m.nome_motorista.toLowerCase().includes(q) || m.motorista.includes(q))
       : fechado
-    return soEstouro ? r.filter(m => m.devs_dia > gatilhoFechado) : r
-  }, [fechado, busca, soEstouro, gatilhoFechado])
+    return soEstouro ? r.filter(m => m.devs_dia > applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)) : r
+  }, [fechado, busca, soEstouro, sigma])
 
   // Alerta precoce — motoristas em 70–99% do gatilho numérico
   const totalQuase = useMemo(() =>
     [...new Set(
       total
         .filter(m => {
-          const p = gatilhoTotal > 0 ? (m.devs_dia / gatilhoTotal) * 100 : 0
+          const limiar = applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
+          const p = limiar > 0 ? (m.devs_dia / limiar) * 100 : 0
           return p >= 70 && p < 100
         })
         .map(m => m.nome_motorista)
     )].slice(0, 6),
-  [total, gatilhoTotal])
+  [total, sigma])
 
   const fechadoQuase = useMemo(() =>
     [...new Set(
       fechado
         .filter(m => {
-          const p = gatilhoFechado > 0 ? (m.devs_dia / gatilhoFechado) * 100 : 0
+          const limiar = applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
+          const p = limiar > 0 ? (m.devs_dia / limiar) * 100 : 0
           return p >= 70 && p < 100
         })
         .map(m => m.nome_motorista)
     )].slice(0, 6),
-  [fechado, gatilhoFechado])
+  [fechado, sigma])
 
-  // ── Tab Geral ─────────────────────────────────────────────────────────────
-  const geralMax = Math.max(...geral.map(d => Math.max(d.pct_dev, gatilhoGeral)), 1)
+  // ── Relato geral — contagem para KPI ─────────────────────────────────────
+  const semRelatoGeral = geral.filter(d => d.pct_dev > gatilhoGeral && !relatos[`|${d.data_rota}|geral`]).length
 
-  const tabGeral = (
-    <div className="space-y-4">
-      {geral[0] && (
-        <div className="bg-[#FFF8DC] border border-[#F2C800]/40 rounded-xl px-5 py-3 flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
-          <span className="text-gray-600">μ: <strong className="text-[#D4A800]">{mediaGeral.toFixed(2)}%</strong></span>
-          <span className="text-gray-600">σ: <strong className="text-[#D4A800]">{desvioGeral.toFixed(2)}%</strong></span>
-          <span className="text-gray-600">
-            Gatilho ({sigma}σ): <strong className="text-red-500">{gatilhoGeral.toFixed(2)}%</strong>
-          </span>
-          <span className="text-gray-400 text-xs self-center">Referência: {periodoRef}</span>
-        </div>
-      )}
+  // ── Reincidentes ─────────────────────────────────────────────────────────
+  const reinciTotalCount = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const m of total) {
+      const lim = applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
+      if (m.devs_dia > lim) map[m.motorista] = (map[m.motorista] ?? 0) + 1
+    }
+    return Object.values(map).filter(c => c > 1).length
+  }, [total, sigma])
 
-      {geral.length > 0 && (
-        <div className="bg-white border border-gray-100 rounded-xl p-4">
-          <p className="text-xs font-medium text-gray-400 mb-3">Evolução diária % Dev vs Gatilho</p>
-          <ResponsiveContainer width="100%" height={160}>
-            <ComposedChart data={geral} margin={{ left: 0, right: 24, top: 4 }}>
-              <CartesianGrid strokeDasharray="4 4" stroke="#F3F4F6" />
-              <XAxis dataKey="data_rota" tickFormatter={fmtData} tick={{ fontSize: 10, fill: '#6B7280' }} />
-              <YAxis
-                tickFormatter={v => `${v}%`}
-                tick={{ fontSize: 10, fill: '#6B7280' }}
-                domain={[0, Math.ceil(geralMax * 1.2)]}
-              />
-              <Tooltip content={<TooltipDia />} />
-              <ReferenceLine
-                y={gatilhoGeral}
-                stroke="#EF4444"
-                strokeDasharray="6 3"
-                strokeWidth={1.5}
-                label={{ value: `${gatilhoGeral.toFixed(2)}%`, fill: '#EF4444', fontSize: 10, position: 'insideTopRight' }}
-              />
-              <Bar dataKey="pct_dev" radius={[2, 2, 0, 0]}>
-                {geral.map((d, i) => (
-                  <Cell
-                    key={i}
-                    fill={d.pct_dev > gatilhoGeral ? '#EF4444' : '#0057A8'}
-                    fillOpacity={d.pct_dev > gatilhoGeral ? 1 : 0.65}
-                  />
-                ))}
-              </Bar>
-            </ComposedChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+  const reinciFechadoCount = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const m of fechado) {
+      const lim = applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
+      if (m.devs_dia > lim) map[m.motorista] = (map[m.motorista] ?? 0) + 1
+    }
+    return Object.values(map).filter(c => c > 1).length
+  }, [fechado, sigma])
 
-      <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
-        <div className="overflow-auto max-h-[28rem]">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10">
-              <tr className="bg-[#003087] text-white text-xs font-medium">
-                <th className="text-left   py-2.5 px-4">Data</th>
-                <th className="text-right  py-2.5 px-4">Fat.</th>
-                <th className="text-right  py-2.5 px-4">Dev.</th>
-                <th className="text-right  py-2.5 px-4">% Dev</th>
-                <th className="text-left   py-2.5 px-4">Uso do Gatilho</th>
-                <th className="text-center py-2.5 px-4">Zona ABC</th>
-              </tr>
-            </thead>
-            <tbody>
-              {geral.map(d => {
-                const zona = getZona(d.pct_dev, mediaGeral, desvioGeral, sigma)
-                const c    = ZONA[zona]
-                return (
-                  <tr
-                    key={d.data_rota}
-                    className="border-b border-gray-50"
-                    style={{ backgroundColor: zona !== 'normal' ? c.rowBg : undefined }}
-                  >
-                    <td className="py-2.5 px-4 font-semibold text-[#003087]">{fmtData(d.data_rota)}</td>
-                    <td className="py-2.5 px-4 text-right text-gray-400 text-xs">{d.pdvs_fat.toLocaleString()}</td>
-                    <td className="py-2.5 px-4 text-right text-gray-600">{d.pdvs_dev}</td>
-                    <td
-                      className="py-2.5 px-4 text-right font-bold"
-                      style={{ color: zona === 'critica' ? '#DC2626' : '#003087' }}
-                    >
-                      {d.pct_dev.toFixed(2)}%
-                    </td>
-                    <td className="py-2.5 px-4"><UsoBarra valor={d.pct_dev} gatilho={gatilhoGeral} /></td>
-                    <td className="py-2.5 px-4 text-center"><ZonaBadge zona={zona} /></td>
-                  </tr>
-                )
-              })}
-              {geral.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="py-8 text-center text-gray-400 text-sm">
-                    Selecione um mês para calcular o gatilho.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  )
+  // ── Relatos atrasados > 3d ────────────────────────────────────────────────
+  const atrasados3d = useMemo(() => {
+    let count = 0
+    for (const d of geral) {
+      if (d.pct_dev > gatilhoGeral && !relatos[`|${d.data_rota}|geral`] && diasPendente(d.data_rota) > 3) count++
+    }
+    for (const m of total) {
+      const lim = applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
+      if (m.devs_dia > lim && !relatos[`${m.motorista}|${m.data_rota}|total`] && diasPendente(m.data_rota) > 3) count++
+    }
+    for (const m of fechado) {
+      const lim = applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
+      if (m.devs_dia > lim && !relatos[`${m.motorista}|${m.data_rota}|fechado`] && diasPendente(m.data_rota) > 3) count++
+    }
+    return count
+  }, [geral, total, fechado, relatos, gatilhoGeral, sigma])
 
   return (
     <div className="space-y-5">
@@ -560,19 +1355,38 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
         <KpiCard
           label="Dias em estouro (frota)"
           value={`${diasCrit} / ${geral.length}`}
+          sub={diasCrit > 0 ? (semRelatoGeral > 0 ? `${semRelatoGeral} sem relato` : '✓ todos relatados') : undefined}
           alerta={diasCrit > 0}
         />
         <KpiCard
-          label="Gatilho Dev. Total"
-          value={`${gatilhoTotal.toFixed(2)} dev/dia`}
-          sub={`${totalEventos} evento(s) de estouro`}
+          label="Limiar Dev. Total (mediano)"
+          value={`${fmtLimiar(medianLimiarTotal)} dev/dia`}
+          sub={`${totalEventos} estouro(s) · ${totalEventos - total.filter(m => relatos[`${m.motorista}|${m.data_rota}|total`] && m.devs_dia > applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)).length} sem relato`}
           alerta={totalEventos > 0}
         />
         <KpiCard
-          label="Gatilho PDV Fechado"
-          value={`${gatilhoFechado} dev/dia`}
-          sub={`${fechadoEventos} evento(s) de estouro`}
+          label="Limiar PDV Fechado (mediano)"
+          value={`${fmtLimiar(medianLimiarFechado)} dev/dia`}
+          sub={`${fechadoEventos} estouro(s) · ${fechadoEventos - fechado.filter(m => relatos[`${m.motorista}|${m.data_rota}|fechado`] && m.devs_dia > applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)).length} sem relato`}
           alerta={fechadoEventos > 0}
+        />
+      </div>
+
+      {/* KPI row 2 — operacional */}
+      <div className="grid grid-cols-2 gap-3">
+        <KpiCard
+          label="Motoristas reincidentes"
+          value={`${Math.max(reinciTotalCount, reinciFechadoCount)}`}
+          sub={reinciTotalCount > 0 || reinciFechadoCount > 0
+            ? `Total: ${reinciTotalCount} · Fechado: ${reinciFechadoCount}`
+            : '✓ Nenhum reincidente'}
+          alerta={reinciTotalCount > 0 || reinciFechadoCount > 0}
+        />
+        <KpiCard
+          label="Relatos atrasados > 3d"
+          value={`${atrasados3d}`}
+          sub={atrasados3d > 0 ? 'Estouro pendente há mais de 3 dias' : '✓ Nenhum atrasado'}
+          alerta={atrasados3d > 0}
         />
       </div>
 
@@ -593,23 +1407,35 @@ export function GatilhoClient({ geral, total, fechado, initialTab }: Props) {
         ))}
       </div>
 
-      {tab === 'geral' && tabGeral}
+      {tab === 'geral' && (
+        <TabGeral
+          dados={geral}
+          gatilho={gatilhoGeral}
+          media={mediaGeral}
+          desvio={desvioGeral}
+          sigma={sigma}
+          periodoRef={periodoRef}
+          relatos={relatos}
+        />
+      )}
       {tab === 'total' && (
         <TabMotoristas
-          dados={total}         filtrados={totalFiltrado}    quase={totalQuase}
-          gatilhoNum={gatilhoTotal} mediaN={mediaTotal}      desvioN={desvioTotal}
-          sigma={sigma}         periodoRef={periodoRef}
-          busca={busca}         soEstouro={soEstouro}
-          onBusca={setBusca}    onSoEstouro={setSoEstouro}
+          dados={total}       filtrados={totalFiltrado}   quase={totalQuase}
+          medianLimiar={medianLimiarTotal}
+          sigma={sigma}       periodoRef={periodoRef}
+          busca={busca}       soEstouro={soEstouro}
+          onBusca={setBusca}  onSoEstouro={setSoEstouro}
+          tipo="total"        relatos={relatos}
         />
       )}
       {tab === 'fechado' && (
         <TabMotoristas
-          dados={fechado}         filtrados={fechadoFiltrado}  quase={fechadoQuase}
-          gatilhoNum={gatilhoFechado} mediaN={mediaFechado}    desvioN={desvioFechado}
-          sigma={sigma}           periodoRef={periodoRef}
-          busca={busca}           soEstouro={soEstouro}
-          onBusca={setBusca}      onSoEstouro={setSoEstouro}
+          dados={fechado}      filtrados={fechadoFiltrado}  quase={fechadoQuase}
+          medianLimiar={medianLimiarFechado}
+          sigma={sigma}        periodoRef={periodoRef}
+          busca={busca}        soEstouro={soEstouro}
+          onBusca={setBusca}   onSoEstouro={setSoEstouro}
+          tipo="fechado"       relatos={relatos}
         />
       )}
     </div>

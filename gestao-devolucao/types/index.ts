@@ -71,6 +71,18 @@ export interface IndicadorDiario {
   calculado_em: string
 }
 
+export interface GatilhoContexto {
+  motorista:     string
+  data_rota:     string
+  tipo:          'total' | 'fechado' | 'geral'
+  devs_dia:      number
+  limiar:        number
+  relato:        string
+  responsavel:   string | null
+  cinco_porques?: string[]
+  categoria?:    string
+}
+
 export interface PlanoAcao {
   id: string
   descricao: string
@@ -84,6 +96,7 @@ export interface PlanoAcao {
   criado_por: string
   criado_em: string
   atualizado_em: string
+  gatilho_contexto: GatilhoContexto | null
 }
 
 export interface Meta {
