@@ -24,11 +24,13 @@ export async function proxy(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
-  if (!user && pathname !== '/login') {
+  const isAuthRoute = pathname.startsWith('/auth/')
+
+  if (!user && pathname !== '/login' && !isAuthRoute) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  if (user && pathname === '/login') {
+  if (user && (pathname === '/login' || pathname === '/auth/recuperar-senha')) {
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 

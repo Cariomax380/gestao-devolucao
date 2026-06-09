@@ -27,6 +27,7 @@ export type GatilhoMotorista = {
 }
 
 export type GatilhoRelato = {
+  id:            string
   motorista:     string
   data_rota:     string
   tipo:          'total' | 'fechado' | 'geral'
@@ -85,7 +86,7 @@ export default async function GatilhoPage({
     supabase.rpc('periodos_disponiveis'),
     supabase
       .from('gatilho_relato')
-      .select('motorista, data_rota, tipo, status, relato, responsavel, criado_em, cinco_porques, categoria')
+      .select('id, motorista, data_rota, tipo, status, relato, responsavel, criado_em, cinco_porques, categoria')
       .order('criado_em', { ascending: false }),
   ])
 

@@ -820,7 +820,8 @@ $$;
 
 
 -- 22. resumo_calor_horario_dia - faixa de horario_finalizacao x dia da semana
--- horario_finalizacao = hora que a visita encerrou (hora real da devolucao, 100% preenchido)
+-- horario_finalizacao armazenado em UTC (text HH:MM); converte para Brasília (UTC-3)
+-- antes de classificar para que os rótulos reflitam o horário local real.
 -- ----------------------------------------------------------------
 DROP FUNCTION IF EXISTS resumo_calor_horario_dia(text);
 CREATE OR REPLACE FUNCTION resumo_calor_horario_dia(p_periodo text DEFAULT NULL)
@@ -828,12 +829,16 @@ RETURNS TABLE(faixa text, dia_semana int, qtd bigint)
 LANGUAGE sql SECURITY DEFINER AS $$
   SELECT
     CASE
-      WHEN horario_finalizacao IS NULL    THEN 'Sem horario'
-      WHEN horario_finalizacao < '09:00'  THEN 'Ate 9h'
-      WHEN horario_finalizacao < '12:00'  THEN '9h - 12h'
-      WHEN horario_finalizacao < '15:00'  THEN '12h - 15h'
-      WHEN horario_finalizacao < '18:00'  THEN '15h - 18h'
-      ELSE                                     '18h ou mais'
+      WHEN horario_finalizacao IS NULL THEN 'Sem horario'
+      ELSE (
+        CASE
+          WHEN (horario_finalizacao::time - INTERVAL '3 hours') < TIME '09:00' THEN 'Ate 9h'
+          WHEN (horario_finalizacao::time - INTERVAL '3 hours') < TIME '12:00' THEN '9h - 12h'
+          WHEN (horario_finalizacao::time - INTERVAL '3 hours') < TIME '15:00' THEN '12h - 15h'
+          WHEN (horario_finalizacao::time - INTERVAL '3 hours') < TIME '18:00' THEN '15h - 18h'
+          ELSE '18h ou mais'
+        END
+      )
     END                                         AS faixa,
     EXTRACT(isodow FROM data_rota)::int         AS dia_semana,
     SUM(pdvs_devolvidos)::bigint                AS qtd

@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/lib/supabase-server'
+import { createClient as createAdmin } from '@supabase/supabase-js'
 import { revalidatePath } from 'next/cache'
 
 export async function salvarMetas(formData: FormData) {
@@ -12,13 +13,6 @@ export async function salvarMetas(formData: FormData) {
     'devolucao_pdv_pct',
     'devolucao_hl_pct',
     'reversao_pct',
-    'repasses_apontados_pct',
-    'repasses_efetivos_pct',
-    'devolucoes_apontadas_pct',
-    'aderencia_raio_pct',
-    'devolucao_antes_horario_pct',
-    'tempo_medio_cme',
-    'tempo_medio_tratativa',
   ]
 
   const upserts = indicadores
@@ -36,6 +30,34 @@ export async function salvarMetas(formData: FormData) {
   const { error } = await supabase
     .from('metas')
     .upsert(upserts, { onConflict: 'indicador,cdd,periodo' })
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/configuracoes')
+  return { ok: true }
+}
+
+export async function convidarUsuario(
+  formData: FormData,
+): Promise<{ error?: string; ok?: boolean }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Não autorizado.' }
+
+  const email = (formData.get('email') as string).trim().toLowerCase()
+  if (!email) return { error: 'Email obrigatório.' }
+
+  const admin = createAdmin(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  )
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
+
+  const { error } = await admin.auth.admin.inviteUserByEmail(email, {
+    redirectTo: `${siteUrl}/auth/callback?type=invite`,
+  })
 
   if (error) return { error: error.message }
 

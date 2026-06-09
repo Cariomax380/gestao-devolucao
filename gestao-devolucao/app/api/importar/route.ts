@@ -33,13 +33,15 @@ function isPdvExcluido(codigoRaw: unknown): boolean {
 function parseTime(ts: unknown): string | null {
   if (!ts) return null
   const s = String(ts).trim()
-  // Se já vier como HH:MM ou HH:MM:SS (ex: "14:30:00"), usa direto
+  // Horário já formatado (HH:MM ou HH:MM:SS) — preserva como horário local
   if (/^\d{2}:\d{2}(:\d{2})?$/.test(s)) return s.slice(0, 5)
   const d = new Date(s)
   if (isNaN(d.getTime())) return null
-  // Usa hora UTC para evitar desvio de fuso no servidor
-  const hh = String(d.getUTCHours()).padStart(2, '0')
-  const mm = String(d.getUTCMinutes()).padStart(2, '0')
+  // Converte para horário de Brasília (UTC-3) usando aritmética UTC pura
+  // para evitar dependência do fuso do servidor
+  const local = new Date(d.getTime() - 3 * 60 * 60 * 1000)
+  const hh = String(local.getUTCHours()).padStart(2, '0')
+  const mm = String(local.getUTCMinutes()).padStart(2, '0')
   return `${hh}:${mm}`
 }
 

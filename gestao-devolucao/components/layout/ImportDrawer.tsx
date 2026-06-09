@@ -13,7 +13,8 @@ interface ImportDrawerProps {
 type Status = 'idle' | 'loading' | 'success' | 'error'
 type Aba = 'devolucoes' | 'motoristas'
 
-const BATCH_SIZE = 200
+const BATCH_SIZE  = 500
+const CONCURRENCY = 3
 const COLUNAS_OBRIGATORIAS = [
   'distribution_center_id', 'tour_date', 'driver_external_id', 'poc_external_id', 'status',
 ]
@@ -125,63 +126,74 @@ function ImportTabDevolucoes() {
         `Períodos detectados no arquivo: ${periodosNoArquivo.join(', ')}`,
       ])
 
-      // 4. Enviar em lotes
-      const totalBatches = Math.ceil(rows.length / BATCH_SIZE)
+      // 4. Montar lotes e enviar (1º sequencial → meio em paralelo → último sequencial)
+      const lotes: Record<string, unknown>[][] = []
+      for (let i = 0; i < rows.length; i += BATCH_SIZE) lotes.push(rows.slice(i, i + BATCH_SIZE))
+      const totalBatches = lotes.length
       let importacaoId: string | null = null
       let limpeza = 'nenhuma'
+      let completados = 0
 
-      setLog(prev => [...prev, `${rows.length.toLocaleString('pt-BR')} linhas. Enviando em ${totalBatches} lote${totalBatches > 1 ? 's' : ''}...`])
+      setLog(prev => [...prev,
+        `${rows.length.toLocaleString('pt-BR')} linhas — ${totalBatches} lote${totalBatches > 1 ? 's' : ''} (${BATCH_SIZE}/lote, até ${CONCURRENCY} paralelos)`,
+      ])
+      setProgress({ current: 0, total: totalBatches })
 
-      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-        const batchNum = Math.floor(i / BATCH_SIZE) + 1
-        setProgress({ current: batchNum, total: totalBatches })
-
+      async function enviarLote(
+        loteDados: Record<string, unknown>[],
+        batchNum: number,
+        impId: string | null,
+        periodos?: string[],
+      ): Promise<Record<string, unknown>> {
         const res = await fetch('/api/importar', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            rows: rows.slice(i, i + BATCH_SIZE),
+            rows: loteDados,
             meta: {
-              filename:         arquivo.name,
+              filename:          arquivo!.name,
               batchNum,
               totalBatches,
-              totalLinhas:      rows.length,
-              importacaoId,
-              periodosNoArquivo: batchNum === 1 ? periodosNoArquivo : undefined,
+              totalLinhas:       rows.length,
+              importacaoId:      impId,
+              ...(periodos !== undefined ? { periodosNoArquivo: periodos } : {}),
             },
           }),
         })
 
-        // Protege contra resposta não-JSON (ex: HTML de erro 502/503)
         let data: Record<string, unknown>
-        try {
-          data = await res.json()
-        } catch {
-          setStatus('error')
-          setLog(prev => [...prev, `Erro no lote ${batchNum}: resposta inválida do servidor (HTTP ${res.status})`])
-          return
+        try { data = await res.json() }
+        catch { throw new Error(`Lote ${batchNum}: resposta inválida (HTTP ${res.status})`) }
+
+        if (!res.ok || !data.ok)
+          throw new Error(`Lote ${batchNum}: ${(data.error as string) ?? 'Falha desconhecida'}`)
+
+        if (data.insertError) setLog(prev => [...prev, `⚠ ${data.insertError}`])
+
+        for (const [k, v] of Object.entries((data.statusCount as Record<string, number>) ?? {})) {
+          statusAcum.current[k] = (statusAcum.current[k] ?? 0) + (v as number)
         }
 
-        if (!res.ok || !data.ok) {
-          setStatus('error')
-          setLog(prev => [...prev, `Erro no lote ${batchNum}: ${(data.error as string) ?? 'Falha desconhecida'}`])
-          return
-        }
+        completados++
+        setProgress({ current: completados, total: totalBatches })
+        return data
+      }
 
-        // Loga erros de insert sem interromper (para diagnóstico)
-        if (data.insertError) {
-          setLog(prev => [...prev, `⚠ ${data.insertError}`])
-        }
+      // Lote 1 — cleanup + cria importacaoId
+      const r1 = await enviarLote(lotes[0], 1, null, periodosNoArquivo)
+      importacaoId = r1.importacaoId as string
+      limpeza      = (r1.limpeza as string) ?? 'nenhuma'
 
-        // Acumula statusCount de todos os lotes
-        if (data.statusCount) {
-          for (const [k, v] of Object.entries(data.statusCount as Record<string, number>)) {
-            statusAcum.current[k] = (statusAcum.current[k] ?? 0) + (v as number)
-          }
-        }
+      // Lotes intermediários em paralelo (grupos de CONCURRENCY)
+      for (let i = 1; i < totalBatches - 1; i += CONCURRENCY) {
+        await Promise.all(
+          lotes.slice(i, i + CONCURRENCY).map((lote, j) => enviarLote(lote, i + j + 1, importacaoId))
+        )
+      }
 
-        importacaoId = data.importacaoId as string
-        if (batchNum === 1) limpeza = (data.limpeza as string) ?? 'nenhuma'
+      // Último lote — finaliza importação + gera plano de ação
+      if (totalBatches > 1) {
+        await enviarLote(lotes[totalBatches - 1], totalBatches, importacaoId)
       }
 
       const resumoStatus = Object.entries(statusAcum.current)

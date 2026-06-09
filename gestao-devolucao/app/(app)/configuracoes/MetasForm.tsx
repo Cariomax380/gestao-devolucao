@@ -4,32 +4,46 @@ import { useRef, useState, useTransition } from 'react'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import { salvarMetas } from './actions'
 
-const INDICADORES = [
-  { key: 'devolucao_pdv_pct',           label: 'Devolução PDV%',             unidade: '%',   dica: 'Ex: 5 para meta de 5%' },
-  { key: 'devolucao_hl_pct',            label: 'Devolução HL%',              unidade: '%',   dica: 'Ex: 3 para meta de 3%' },
-  { key: 'reversao_pct',                label: 'Reversão%',                  unidade: '%',   dica: 'Ex: 80 para meta de 80%' },
-  { key: 'repasses_apontados_pct',      label: 'Repasses Apontados%',        unidade: '%',   dica: 'Ex: 90 para meta de 90%' },
-  { key: 'repasses_efetivos_pct',       label: 'Repasses Efetivos%',         unidade: '%',   dica: 'Ex: 85 para meta de 85%' },
-  { key: 'devolucoes_apontadas_pct',    label: 'Dev. Apontadas vs Total%',   unidade: '%',   dica: 'Ex: 70 para meta de 70%' },
-  { key: 'aderencia_raio_pct',          label: 'Aderência Raio%',            unidade: '%',   dica: 'Ex: 95 para meta de 95%' },
-  { key: 'devolucao_antes_horario_pct', label: 'Dev. Antes Horário%',        unidade: '%',   dica: 'Ex: 60 para meta de 60%' },
-  { key: 'tempo_medio_cme',             label: 'Tempo Médio CME',            unidade: 'min', dica: 'Ex: 30 para meta de 30 min' },
-  { key: 'tempo_medio_tratativa',       label: 'Tempo Médio Tratativa',      unidade: 'min', dica: 'Ex: 60 para meta de 60 min' },
+const METAS = [
+  {
+    key:         'devolucao_pdv_pct',
+    label:       'Dev. PDV',
+    descricao:   'Percentual de PDVs devolvidos sobre o total faturado',
+    direcao:     'menor' as const,
+    cor:         '#F2C800',
+    placeholder: '5.0',
+  },
+  {
+    key:         'devolucao_hl_pct',
+    label:       'Dev. HL',
+    descricao:   'Percentual de volume devolvido em hectolitros',
+    direcao:     'menor' as const,
+    cor:         '#0057A8',
+    placeholder: '3.0',
+  },
+  {
+    key:         'reversao_pct',
+    label:       'Reversão',
+    descricao:   'Taxa de devoluções revertidas em repasses',
+    direcao:     'maior' as const,
+    cor:         '#7c3aed',
+    placeholder: '80.0',
+  },
 ]
 
 interface Periodo { periodo: string; cdd: string }
 
 interface Props {
-  metasAtuais: Record<string, number>
-  periodos: Periodo[]
+  metasAtuais:       Record<string, number>
+  periodos:          Periodo[]
   periodoSelecionado: string
 }
 
 export function MetasForm({ metasAtuais, periodos, periodoSelecionado }: Props) {
   const formRef = useRef<HTMLFormElement>(null)
-  const router = useRouter()
+  const router   = useRouter()
   const pathname = usePathname()
-  const params = useSearchParams()
+  const params   = useSearchParams()
   const [isPending, startTransition] = useTransition()
   const [msg, setMsg] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null)
 
@@ -50,75 +64,95 @@ export function MetasForm({ metasAtuais, periodos, periodoSelecionado }: Props) 
       if ('error' in res) {
         setMsg({ tipo: 'erro', texto: res.error! })
       } else {
-        setMsg({ tipo: 'ok', texto: `Metas do período "${periodoSelecionado === 'global' ? 'Global' : periodoSelecionado}" salvas!` })
+        const periodo = periodoSelecionado === 'global' ? 'todos os períodos' : periodoSelecionado
+        setMsg({ tipo: 'ok', texto: `Metas salvas para "${periodo}".` })
       }
     })
   }
 
-  const inputCls = 'w-full bg-white border border-gray-200 text-[#111111] text-sm rounded-lg px-3 py-2 text-right focus:border-[#F2C800] focus:outline-none'
-
   return (
-    <form ref={formRef} onSubmit={handleSubmit} className="space-y-3">
-      {/* Seletor de período */}
-      <div className="bg-white border border-gray-100 rounded-xl p-5">
-        <label className="text-gray-500 text-xs mb-2 block font-medium">Período das metas</label>
-        <select
-          name="periodo"
-          value={periodoSelecionado}
-          onChange={onPeriodoChange}
-          className="w-full bg-white border border-gray-200 text-[#111111] text-sm rounded-lg px-3 py-2 focus:border-[#F2C800] focus:outline-none"
-        >
-          <option value="global">Global (padrão para todos os períodos)</option>
-          {periodos.map(p => (
-            <option key={p.periodo} value={p.periodo}>
-              {new Date(p.periodo + '-15').toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })}
-            </option>
-          ))}
-        </select>
-        {periodoSelecionado !== 'global' && (
-          <p className="text-xs text-[#D4A800] mt-2">
-            Metas específicas deste período sobrepõem as globais ao filtrar por ele.
-          </p>
-        )}
+    <form ref={formRef} onSubmit={handleSubmit}>
+
+      {/* Selector de período */}
+      <div className="px-6 py-4 border-b border-gray-50 flex items-center justify-between gap-4">
+        <p className="text-xs text-gray-400">Aplique as metas a um período específico ou deixe como global.</p>
+        <div className="shrink-0 text-right">
+          <select
+            name="periodo"
+            value={periodoSelecionado}
+            onChange={onPeriodoChange}
+            className="bg-[#F9FAFB] border border-gray-200 text-[#111] text-xs rounded-lg px-3 py-2 focus:border-[#F2C800] focus:outline-none cursor-pointer"
+          >
+            <option value="global">Global</option>
+            {periodos.map(p => (
+              <option key={p.periodo} value={p.periodo}>
+                {new Date(p.periodo + '-15').toLocaleDateString('pt-BR', { month: 'short', year: 'numeric' })}
+              </option>
+            ))}
+          </select>
+          {periodoSelecionado !== 'global' && (
+            <p className="text-[10px] text-[#D4A800] mt-1.5">Sobrepõe o global</p>
+          )}
+        </div>
       </div>
 
-      {/* Indicadores */}
-      {INDICADORES.map(({ key, label, unidade, dica }) => (
-        <div key={key} className="bg-white border border-gray-100 rounded-xl p-5 flex items-center gap-6">
-          <div className="flex-1 min-w-0">
-            <p className="text-[#111111] text-sm font-medium">{label}</p>
-            <p className="text-gray-400 text-xs mt-0.5">{dica}</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <input
-              type="number"
-              name={key}
-              step="0.01"
-              min="0"
-              defaultValue={metasAtuais[key] ?? ''}
-              placeholder="—"
-              className={`w-28 ${inputCls}`}
-            />
-            <span className="text-gray-400 text-sm w-8">{unidade}</span>
-          </div>
-        </div>
-      ))}
+      {/* Grid de métricas */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-gray-50">
+        {METAS.map(({ key, label, descricao, direcao, cor, placeholder }) => (
+          <div key={key} className="p-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: cor }} />
+              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">{label}</span>
+            </div>
 
-      {msg && (
-        <div className={`rounded-xl px-5 py-3 text-sm ${
-          msg.tipo === 'ok'
-            ? 'bg-[#10B981]/8 border border-[#10B981]/20 text-[#10B981]'
-            : 'bg-[#EF4444]/8 border border-[#EF4444]/20 text-[#EF4444]'
-        }`}>
-          {msg.texto}
-        </div>
-      )}
+            <p className="text-[11px] text-gray-400 leading-relaxed">{descricao}</p>
 
-      <div className="flex justify-end pt-2">
+            <div className="relative">
+              <input
+                type="number"
+                name={key}
+                step="0.01"
+                min="0"
+                max="100"
+                defaultValue={metasAtuais[key] ?? ''}
+                placeholder={placeholder}
+                className="w-full bg-[#F9FAFB] border border-gray-200 text-[#111] text-2xl font-bold rounded-lg pl-4 pr-10 py-3 text-right focus:border-[#F2C800] focus:outline-none transition-colors"
+              />
+              <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm font-medium">%</span>
+            </div>
+
+            <p className="text-[10px] text-gray-400 flex items-center gap-1">
+              {direcao === 'menor' ? (
+                <>
+                  <svg className="w-3 h-3 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                  </svg>
+                  Menor é melhor
+                </>
+              ) : (
+                <>
+                  <svg className="w-3 h-3 text-green-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 15l7-7 7 7" />
+                  </svg>
+                  Maior é melhor
+                </>
+              )}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      {/* Footer */}
+      <div className="px-6 py-4 border-t border-gray-50 flex items-center justify-between">
+        {msg ? (
+          <span className={`text-sm ${msg.tipo === 'ok' ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
+            {msg.texto}
+          </span>
+        ) : <span />}
         <button
           type="submit"
           disabled={isPending}
-          className="bg-[#F2C800] hover:bg-[#D4A800] disabled:opacity-50 text-[#003087] text-sm font-semibold px-6 py-2.5 rounded-lg transition-colors"
+          className="bg-[#F2C800] hover:bg-[#D4A800] disabled:opacity-50 text-[#003087] text-sm font-semibold px-5 py-2 rounded-lg transition-colors active:scale-[0.98]"
         >
           {isPending ? 'Salvando…' : 'Salvar metas'}
         </button>

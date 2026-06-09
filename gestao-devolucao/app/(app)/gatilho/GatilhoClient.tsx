@@ -8,7 +8,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import type { GatilhoDia, GatilhoMotorista, GatilhoRelato } from './page'
-import { criarRelato, type RelatoInput } from './actions'
+import { criarRelato, editarRelato, resetarRelato, type RelatoInput } from './actions'
 
 interface Props {
   geral:      GatilhoDia[]
@@ -275,6 +275,195 @@ function Popover5P({ porques }: { porques: string[] }) {
   )
 }
 
+// ── RelatoCardPopover ─────────────────────────────────────────────────────────
+
+function RelatoCardPopover({ relato, onEdit }: { relato: GatilhoRelato; onEdit: () => void }) {
+  const [open,         setOpen        ] = useState(false)
+  const [pos,          setPos         ] = useState({ top: 0, left: 0 })
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [resetting,    setResetting   ] = useState(false)
+  const [resetError,   setResetError  ] = useState<string | null>(null)
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const portalRef  = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onOutside(e: MouseEvent) {
+      const t = e.target as Node
+      if (triggerRef.current?.contains(t) || portalRef.current?.contains(t)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [open])
+
+  function handleToggle(e: React.MouseEvent) {
+    e.stopPropagation()
+    const rect   = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const W      = 320   // w-80
+    const H      = 420   // approximate max card height
+    // Horizontal: right-align to trigger so card opens leftward (avoids viewport overflow)
+    const left   = Math.max(8, Math.min(rect.right - W, window.innerWidth - W - 8))
+    // Vertical: open below if enough space, otherwise above
+    const top    = window.innerHeight - rect.bottom >= H
+      ? rect.bottom + 6
+      : Math.max(8, rect.top - H - 6)
+    setPos({ top, left })
+    setConfirmReset(false)
+    setResetError(null)
+    setOpen(v => !v)
+  }
+
+  async function handleReset() {
+    setResetting(true)
+    setResetError(null)
+    const result = await resetarRelato(relato.id)
+    setResetting(false)
+    if (result.error) {
+      setResetError(result.error)
+      return
+    }
+    setOpen(false)
+    setConfirmReset(false)
+  }
+
+  const relStatus = STATUS_RELATO[relato.status]
+  const catInfo   = relato.categoria ? CATEGORIA[relato.categoria] : null
+  const filled5P  = relato.cinco_porques?.filter(p => p.trim()) ?? []
+
+  return (
+    <div ref={triggerRef} className="flex flex-col items-center gap-0.5">
+      <button
+        type="button"
+        onClick={handleToggle}
+        className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap hover:opacity-80 transition-opacity"
+        style={{ backgroundColor: relStatus.bg, color: relStatus.text }}
+      >
+        ✓ {relStatus.label}
+      </button>
+      {catInfo && (
+        <span
+          className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide"
+          style={{ backgroundColor: catInfo.bg, color: catInfo.text }}
+        >
+          {catInfo.label}
+        </span>
+      )}
+      {open && typeof document !== 'undefined' && createPortal(
+        <div
+          ref={portalRef}
+          className="fixed z-[300] bg-white border border-gray-200 rounded-2xl shadow-2xl w-80 overflow-hidden"
+          style={{ top: pos.top, left: pos.left }}
+        >
+          <div className="bg-[#003087] text-white px-4 py-3 flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span
+                  className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide"
+                  style={{ backgroundColor: relStatus.bg, color: relStatus.text }}
+                >
+                  ✓ {relStatus.label}
+                </span>
+                {catInfo && (
+                  <span
+                    className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide"
+                    style={{ backgroundColor: catInfo.bg, color: catInfo.text }}
+                  >
+                    {catInfo.label}
+                  </span>
+                )}
+              </div>
+              {relato.responsavel && (
+                <p className="text-xs text-blue-200 mt-1 truncate">{relato.responsavel}</p>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); setOpen(false); onEdit() }}
+                className="text-[10px] bg-white/15 hover:bg-white/25 text-white rounded-md px-2 py-1 transition-colors font-semibold flex items-center gap-1"
+              >
+                ✏ Editar
+              </button>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="text-blue-300 hover:text-white transition-colors text-sm leading-none"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+          <div className="p-4 space-y-3 max-h-72 overflow-y-auto">
+            <div>
+              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Relato</p>
+              <p className="text-sm text-gray-700 leading-relaxed">{relato.relato}</p>
+            </div>
+            {filled5P.length > 0 && (
+              <div>
+                <p className="text-[10px] font-bold text-[#003087] uppercase tracking-wider mb-2">5 Porquês · Causa Raiz</p>
+                <ol className="space-y-2">
+                  {filled5P.map((p, i) => (
+                    <li key={i} className="flex gap-2.5">
+                      <span className="w-5 h-5 rounded-full bg-[#003087]/10 text-[#003087] text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                        {i + 1}
+                      </span>
+                      <p className="text-xs text-gray-700 leading-relaxed">{p}</p>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+            <p className="text-[10px] text-gray-300 border-t border-gray-100 pt-2">
+              Registrado em {new Date(relato.criado_em).toLocaleDateString('pt-BR')}
+            </p>
+          </div>
+          {/* Rodapé reset */}
+          {!confirmReset ? (
+            <div className="px-4 pb-3">
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); setConfirmReset(true) }}
+                className="text-[10px] text-gray-400 hover:text-red-500 transition-colors underline underline-offset-2"
+              >
+                ↩ Resetar relato
+              </button>
+            </div>
+          ) : (
+            <div className="bg-red-50 border-t border-red-100 px-4 py-3">
+              <p className="text-xs font-medium text-red-600 mb-2">
+                Apagar este relato? Não há desfazer.
+              </p>
+              {resetError && (
+                <p className="text-[10px] text-red-500 mb-2">{resetError}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); setConfirmReset(false); setResetError(null) }}
+                  disabled={resetting}
+                  className="flex-1 text-xs py-1.5 rounded-md border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={e => { e.stopPropagation(); handleReset() }}
+                  disabled={resetting}
+                  className="flex-1 text-xs py-1.5 rounded-md bg-red-500 hover:bg-red-600 text-white font-semibold transition-colors disabled:opacity-40"
+                >
+                  {resetting ? 'Apagando…' : 'Apagar'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  )
+}
+
 function CincoPorques({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
   // Exibe P(i+1) apenas quando P(i) já tem conteúdo — progressão obrigada
   const emptyIdx  = value.findIndex(p => !p.trim())
@@ -312,23 +501,28 @@ function CincoPorques({ value, onChange }: { value: string[]; onChange: (v: stri
 // ── RelatoModal ──────────────────────────────────────────────────────────────
 
 function RelatoModal({
-  m, limiar, tipo, onClose,
+  m, limiar, tipo, onClose, editRelato,
 }: {
-  m:      GatilhoMotorista
-  limiar: number
-  tipo:   'total' | 'fechado'
-  onClose: () => void
+  m:           GatilhoMotorista
+  limiar:      number
+  tipo:        'total' | 'fechado'
+  onClose:     () => void
+  editRelato?: GatilhoRelato
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [relato,      setRelato]      = useState('')
-  const [responsavel, setResponsavel] = useState('')
-  const [status,      setStatus]      = useState<GatilhoRelato['status']>('relatado')
+  const [relato,      setRelato]      = useState(() => editRelato?.relato ?? '')
+  const [responsavel, setResponsavel] = useState(() => editRelato?.responsavel ?? '')
+  const [status,      setStatus]      = useState<GatilhoRelato['status']>(() => editRelato?.status ?? 'relatado')
   const [gerarAcao,   setGerarAcao]   = useState(false)
   const [erro,        setErro]        = useState<string | null>(null)
-  const [aplicar5p,   setAplicar5p]   = useState(false)
-  const [porques,     setPorques]     = useState<string[]>(['', '', '', '', ''])
-  const [categoria,   setCategoria]   = useState('')
+  const [aplicar5p,   setAplicar5p]   = useState(() => !!(editRelato?.cinco_porques?.length))
+  const [porques,     setPorques]     = useState<string[]>(() => {
+    const arr = editRelato?.cinco_porques ? [...editRelato.cinco_porques] : []
+    while (arr.length < 5) arr.push('')
+    return arr.slice(0, 5)
+  })
+  const [categoria,   setCategoria]   = useState(() => editRelato?.categoria ?? '')
 
   const delta = m.devs_dia - limiar
 
@@ -337,20 +531,34 @@ function RelatoModal({
     if (!relato.trim()) return
     setErro(null)
     startTransition(async () => {
-      const result = await criarRelato({
-        motorista:   m.motorista,
-        data_rota:   m.data_rota,
-        tipo,
-        devs_dia:    m.devs_dia,
-        limiar,
-        relato:      relato.trim(),
-        responsavel: responsavel.trim() || undefined,
-        status,
-        gerarAcao,
-        cincoP:      aplicar5p ? porques : undefined,
-        categoria:   (categoria || undefined) as RelatoInput['categoria'],
-      })
-      if (result.error) { setErro(result.error); return }
+      const cincoP = aplicar5p ? porques : undefined
+      const catVal = (categoria || undefined) as RelatoInput['categoria']
+      if (editRelato) {
+        const result = await editarRelato({
+          id:          editRelato.id,
+          relato:      relato.trim(),
+          responsavel: responsavel.trim() || undefined,
+          status,
+          cincoP,
+          categoria:   catVal,
+        })
+        if (result.error) { setErro(result.error); return }
+      } else {
+        const result = await criarRelato({
+          motorista:   m.motorista,
+          data_rota:   m.data_rota,
+          tipo,
+          devs_dia:    m.devs_dia,
+          limiar,
+          relato:      relato.trim(),
+          responsavel: responsavel.trim() || undefined,
+          status,
+          gerarAcao,
+          cincoP,
+          categoria:   catVal,
+        })
+        if (result.error) { setErro(result.error); return }
+      }
       router.refresh()
       onClose()
     })
@@ -368,7 +576,7 @@ function RelatoModal({
         {/* Header */}
         <div className="bg-[#003087] text-white px-6 py-4 shrink-0">
           <p className="text-xs font-medium text-blue-200 uppercase tracking-wider mb-0.5">
-            Relato de estouro — {tipo === 'total' ? 'Dev. Total' : 'PDV Fechado'}
+            {editRelato ? 'Editar relato' : 'Relato de estouro'} — {tipo === 'total' ? 'Dev. Total' : 'PDV Fechado'}
           </p>
           <h3 className="font-bold text-lg leading-tight">{m.nome_motorista}</h3>
           <p className="text-blue-200 text-sm">{fmtData(m.data_rota)} · {m.motorista}</p>
@@ -444,19 +652,21 @@ function RelatoModal({
             </select>
           </div>
 
-          {/* Checkbox gerar plano de ação */}
-          <label className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={gerarAcao}
-              onChange={e => setGerarAcao(e.target.checked)}
-              className="mt-0.5 accent-[#003087]"
-            />
-            <div>
-              <p className="text-sm font-semibold text-gray-700">Gerar item no Plano de Ação</p>
-              <p className="text-xs text-gray-500 mt-0.5">Cria uma ação de prioridade alta vinculada a este estouro</p>
-            </div>
-          </label>
+          {/* Checkbox gerar plano de ação — só visível no modo criar */}
+          {!editRelato && (
+            <label className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={gerarAcao}
+                onChange={e => setGerarAcao(e.target.checked)}
+                className="mt-0.5 accent-[#003087]"
+              />
+              <div>
+                <p className="text-sm font-semibold text-gray-700">Gerar item no Plano de Ação</p>
+                <p className="text-xs text-gray-500 mt-0.5">Cria uma ação de prioridade alta vinculada a este estouro</p>
+              </div>
+            </label>
+          )}
 
           {/* 5 Porquês — análise de causa raiz */}
           <div className="border border-[#003087]/10 rounded-lg overflow-hidden">
@@ -498,7 +708,7 @@ function RelatoModal({
               disabled={isPending || !relato.trim()}
               className="flex-1 bg-[#003087] text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-[#002070] transition-colors disabled:opacity-50"
             >
-              {isPending ? 'Salvando...' : 'Salvar Relato'}
+              {isPending ? 'Salvando...' : editRelato ? 'Atualizar Relato' : 'Salvar Relato'}
             </button>
           </div>
         </form>
@@ -509,17 +719,21 @@ function RelatoModal({
 
 // ── RelatoGeralModal ─────────────────────────────────────────────────────────
 
-function RelatoGeralModal({ d, gatilho, onClose }: { d: GatilhoDia; gatilho: number; onClose: () => void }) {
+function RelatoGeralModal({ d, gatilho, onClose, editRelato }: { d: GatilhoDia; gatilho: number; onClose: () => void; editRelato?: GatilhoRelato }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
-  const [relato,      setRelato]      = useState('')
-  const [responsavel, setResponsavel] = useState('')
-  const [status,      setStatus]      = useState<GatilhoRelato['status']>('relatado')
+  const [relato,      setRelato]      = useState(() => editRelato?.relato ?? '')
+  const [responsavel, setResponsavel] = useState(() => editRelato?.responsavel ?? '')
+  const [status,      setStatus]      = useState<GatilhoRelato['status']>(() => editRelato?.status ?? 'relatado')
   const [gerarAcao,   setGerarAcao]   = useState(false)
   const [erro,        setErro]        = useState<string | null>(null)
-  const [aplicar5p,   setAplicar5p]   = useState(false)
-  const [porques,     setPorques]     = useState<string[]>(['', '', '', '', ''])
-  const [categoriaG,  setCategoriaG]  = useState('')
+  const [aplicar5p,   setAplicar5p]   = useState(() => !!(editRelato?.cinco_porques?.length))
+  const [porques,     setPorques]     = useState<string[]>(() => {
+    const arr = editRelato?.cinco_porques ? [...editRelato.cinco_porques] : []
+    while (arr.length < 5) arr.push('')
+    return arr.slice(0, 5)
+  })
+  const [categoriaG,  setCategoriaG]  = useState(() => editRelato?.categoria ?? '')
 
   const delta = d.pct_dev - gatilho
 
@@ -528,20 +742,34 @@ function RelatoGeralModal({ d, gatilho, onClose }: { d: GatilhoDia; gatilho: num
     if (!relato.trim()) return
     setErro(null)
     startTransition(async () => {
-      const result = await criarRelato({
-        motorista:   '',
-        data_rota:   d.data_rota,
-        tipo:        'geral',
-        devs_dia:    d.pct_dev,
-        limiar:      gatilho,
-        relato:      relato.trim(),
-        responsavel: responsavel.trim() || undefined,
-        status,
-        gerarAcao,
-        cincoP:      aplicar5p ? porques : undefined,
-        categoria:   (categoriaG || undefined) as RelatoInput['categoria'],
-      })
-      if (result.error) { setErro(result.error); return }
+      const cincoP = aplicar5p ? porques : undefined
+      const catVal = (categoriaG || undefined) as RelatoInput['categoria']
+      if (editRelato) {
+        const result = await editarRelato({
+          id:          editRelato.id,
+          relato:      relato.trim(),
+          responsavel: responsavel.trim() || undefined,
+          status,
+          cincoP,
+          categoria:   catVal,
+        })
+        if (result.error) { setErro(result.error); return }
+      } else {
+        const result = await criarRelato({
+          motorista:   '',
+          data_rota:   d.data_rota,
+          tipo:        'geral',
+          devs_dia:    d.pct_dev,
+          limiar:      gatilho,
+          relato:      relato.trim(),
+          responsavel: responsavel.trim() || undefined,
+          status,
+          gerarAcao,
+          cincoP,
+          categoria:   catVal,
+        })
+        if (result.error) { setErro(result.error); return }
+      }
       router.refresh()
       onClose()
     })
@@ -552,7 +780,7 @@ function RelatoGeralModal({ d, gatilho, onClose }: { d: GatilhoDia; gatilho: num
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[88vh]" onClick={e => e.stopPropagation()}>
         <div className="bg-[#003087] text-white px-6 py-4 shrink-0">
           <p className="text-xs font-medium text-blue-200 uppercase tracking-wider mb-0.5">
-            Relato de estouro — Devolução Geral (frota)
+            {editRelato ? 'Editar relato' : 'Relato de estouro'} — Devolução Geral (frota)
           </p>
           <h3 className="font-bold text-lg leading-tight">{fmtData(d.data_rota)}</h3>
           <p className="text-blue-200 text-sm">{d.pdvs_fat.toLocaleString()} faturados · {d.pdvs_dev} devolvidos</p>
@@ -617,13 +845,15 @@ function RelatoGeralModal({ d, gatilho, onClose }: { d: GatilhoDia; gatilho: num
             </select>
           </div>
 
-          <label className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg cursor-pointer select-none">
-            <input type="checkbox" checked={gerarAcao} onChange={e => setGerarAcao(e.target.checked)} className="mt-0.5 accent-[#003087]" />
-            <div>
-              <p className="text-sm font-semibold text-gray-700">Gerar item no Plano de Ação</p>
-              <p className="text-xs text-gray-500 mt-0.5">Cria uma ação de prioridade alta para este estouro de frota</p>
-            </div>
-          </label>
+          {!editRelato && (
+            <label className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg cursor-pointer select-none">
+              <input type="checkbox" checked={gerarAcao} onChange={e => setGerarAcao(e.target.checked)} className="mt-0.5 accent-[#003087]" />
+              <div>
+                <p className="text-sm font-semibold text-gray-700">Gerar item no Plano de Ação</p>
+                <p className="text-xs text-gray-500 mt-0.5">Cria uma ação de prioridade alta para este estouro de frota</p>
+              </div>
+            </label>
+          )}
 
           {/* 5 Porquês — análise de causa raiz */}
           <div className="border border-[#003087]/10 rounded-lg overflow-hidden">
@@ -655,7 +885,7 @@ function RelatoGeralModal({ d, gatilho, onClose }: { d: GatilhoDia; gatilho: num
             </button>
             <button type="submit" disabled={isPending || !relato.trim()}
               className="flex-1 bg-[#003087] text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-[#002070] transition-colors disabled:opacity-50">
-              {isPending ? 'Salvando...' : 'Salvar Relato'}
+              {isPending ? 'Salvando...' : editRelato ? 'Atualizar Relato' : 'Salvar Relato'}
             </button>
           </div>
         </form>
@@ -678,6 +908,7 @@ interface TabGeralProps {
 
 function TabGeral({ dados, gatilho, media, desvio, sigma, periodoRef, relatos }: TabGeralProps) {
   const [modalDados, setModalDados] = useState<GatilhoDia | null>(null)
+  const [editModal,  setEditModal]  = useState<GatilhoRelato | null>(null)
 
   const geralKey  = (d: GatilhoDia) => `|${d.data_rota}|geral`
   const geralMax  = Math.max(...dados.map(d => Math.max(d.pct_dev, gatilho)), 1)
@@ -783,25 +1014,10 @@ function TabGeral({ dados, gatilho, media, desvio, sigma, periodoRef, relatos }:
                     <td className="py-2.5 px-4 text-center">
                       {isEstouro ? (
                         relStatus ? (
-                          <div className="flex flex-col items-center gap-0.5">
-                            <span className="inline-flex items-center gap-1">
-                              <span
-                                title={relExist?.relato}
-                                className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap cursor-default"
-                                style={{ backgroundColor: relStatus.bg, color: relStatus.text }}
-                              >
-                                ✓ {relStatus.label}
-                              </span>
-                              {relExist?.cinco_porques && relExist.cinco_porques.length > 0 && (
-                                <Popover5P porques={relExist.cinco_porques} />
-                              )}
-                            </span>
-                            {catInfo && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide" style={{ backgroundColor: catInfo.bg, color: catInfo.text }}>
-                                {catInfo.label}
-                              </span>
-                            )}
-                          </div>
+                          <RelatoCardPopover
+                            relato={relExist!}
+                            onEdit={() => { setEditModal(relExist!); setModalDados(d) }}
+                          />
                         ) : (
                           <button
                             onClick={() => setModalDados(d)}
@@ -831,7 +1047,12 @@ function TabGeral({ dados, gatilho, media, desvio, sigma, periodoRef, relatos }:
       </div>
 
       {modalDados && (
-        <RelatoGeralModal d={modalDados} gatilho={gatilho} onClose={() => setModalDados(null)} />
+        <RelatoGeralModal
+          d={modalDados}
+          gatilho={gatilho}
+          editRelato={editModal ?? undefined}
+          onClose={() => { setModalDados(null); setEditModal(null) }}
+        />
       )}
     </div>
   )
@@ -866,6 +1087,7 @@ function TabMotoristas({
 }: TabMotoristaProps) {
   const [filtroRelato, setFiltroRelato] = useState<FiltroRelato>('todos')
   const [modalDados,   setModalDados]   = useState<{ m: GatilhoMotorista; limiar: number } | null>(null)
+  const [editModal,    setEditModal]    = useState<GatilhoRelato | null>(null)
 
   const limiarFn  = (m: GatilhoMotorista) => applyLimiar(m.media_prev + sigma * m.desvio_prev, sigma)
   const relatoKey = (m: GatilhoMotorista) => `${m.motorista}|${m.data_rota}|${tipo}`
@@ -1115,25 +1337,10 @@ function TabMotoristas({
                     <td className="py-2.5 px-4 text-center">
                       {isEstouro ? (
                         relStatus ? (
-                          <div className="flex flex-col items-center gap-0.5">
-                            <span className="inline-flex items-center gap-1">
-                              <span
-                                title={relExist?.relato}
-                                className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap cursor-default"
-                                style={{ backgroundColor: relStatus.bg, color: relStatus.text }}
-                              >
-                                ✓ {relStatus.label}
-                              </span>
-                              {relExist?.cinco_porques && relExist.cinco_porques.length > 0 && (
-                                <Popover5P porques={relExist.cinco_porques} />
-                              )}
-                            </span>
-                            {catInfo && (
-                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide" style={{ backgroundColor: catInfo.bg, color: catInfo.text }}>
-                                {catInfo.label}
-                              </span>
-                            )}
-                          </div>
+                          <RelatoCardPopover
+                            relato={relExist!}
+                            onEdit={() => { setEditModal(relExist!); setModalDados({ m, limiar }) }}
+                          />
                         ) : (
                           <div className="flex flex-col items-center gap-0.5">
                             <button
@@ -1186,7 +1393,8 @@ function TabMotoristas({
           m={modalDados.m}
           limiar={modalDados.limiar}
           tipo={tipo}
-          onClose={() => setModalDados(null)}
+          editRelato={editModal ?? undefined}
+          onClose={() => { setModalDados(null); setEditModal(null) }}
         />
       )}
     </div>

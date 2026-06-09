@@ -89,3 +89,60 @@ export async function criarRelato(input: RelatoInput): Promise<{ error?: string;
   revalidatePath('/gatilho')
   return { ok: true }
 }
+
+export interface EditarRelatoInput {
+  id:          string
+  relato:      string
+  responsavel?: string
+  status:      'relatado' | 'em_acompanhamento' | 'concluido'
+  cincoP?:     string[]
+  categoria?:  'operacional' | 'comercial' | 'externo' | 'sistemico'
+}
+
+export async function editarRelato(input: EditarRelatoInput): Promise<{ error?: string; ok?: boolean }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Não autorizado' }
+
+  if (!input.relato.trim()) return { error: 'Relato é obrigatório' }
+  if (!['relatado', 'em_acompanhamento', 'concluido'].includes(input.status)) {
+    return { error: 'Status inválido' }
+  }
+
+  const cincoPFiltered = input.cincoP?.filter(s => s.trim())
+  const cincoPValue = cincoPFiltered?.length ? cincoPFiltered : null
+
+  const { error } = await supabase
+    .from('gatilho_relato')
+    .update({
+      relato:        input.relato.trim(),
+      responsavel:   input.responsavel?.trim() || null,
+      status:        input.status,
+      cinco_porques: cincoPValue,
+      categoria:     input.categoria ?? null,
+    })
+    .eq('id', input.id)
+    .eq('user_id', user.id)
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/gatilho')
+  return { ok: true }
+}
+
+export async function resetarRelato(id: string): Promise<{ error?: string; ok?: boolean }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Não autorizado' }
+
+  const { error } = await supabase
+    .from('gatilho_relato')
+    .delete()
+    .eq('id', id)
+    .eq('user_id', user.id)
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/gatilho')
+  return { ok: true }
+}
