@@ -1,0 +1,75 @@
+'use server'
+
+import { createClient } from '@/lib/supabase-server'
+import { createClient as createAdmin } from '@supabase/supabase-js'
+import { revalidatePath } from 'next/cache'
+
+export async function salvarMetas(formData: FormData) {
+  const supabase = await createClient()
+
+  const periodo = (formData.get('periodo') as string) || 'global'
+
+  const indicadores = [
+    'devolucao_pdv_pct',
+    'devolucao_hl_pct',
+    'reversao_pct',
+  ]
+
+  const upserts = indicadores
+    .map(ind => {
+      const raw = formData.get(ind)
+      if (raw === null || raw === '') return null
+      const valor = parseFloat(raw as string)
+      if (isNaN(valor)) return null
+      return { indicador: ind, valor_meta: valor, cdd: '*', periodo }
+    })
+    .filter(Boolean)
+
+  if (upserts.length === 0) return { error: 'Nenhum valor válido informado.' }
+
+  const { error } = await supabase
+    .from('metas')
+    .upsert(upserts, { onConflict: 'indicador,cdd,periodo' })
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/configuracoes')
+  return { ok: true }
+}
+
+export async function convidarUsuario(
+  formData: FormData,
+): Promise<{ error?: string; ok?: boolean }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Não autorizado.' }
+
+  const email = (formData.get('email') as string).trim().toLowerCase()
+  if (!email) return { error: 'Email obrigatório.' }
+
+  const admin = createAdmin(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!,
+    { auth: { autoRefreshToken: false, persistSession: false } },
+  )
+
+  // Apenas o primeiro usuário cadastrado (admin) pode convidar
+  const { data: allUsers } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 })
+  const sorted = (allUsers?.users ?? []).sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+  )
+  if (!sorted.length || sorted[0].id !== user.id) {
+    return { error: 'Apenas o administrador pode convidar novos usuários.' }
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? 'http://localhost:3000'
+
+  const { error } = await admin.auth.admin.inviteUserByEmail(email, {
+    redirectTo: `${siteUrl}/auth/callback?type=invite`,
+  })
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/configuracoes')
+  return { ok: true }
+}
