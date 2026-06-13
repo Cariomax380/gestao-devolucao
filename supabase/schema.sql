@@ -1078,7 +1078,7 @@ BEGIN
     ac.motorista::text,
     COALESCE(m.nome, 'cod. ' || ac.motorista)::text,
     ac.dev_dia,
-    ac.fat,
+    ac.fat AS fat_dia,
     -- stats individuais se ≥ 3 dias de histórico; fallback para frota
     ROUND(CASE WHEN sm.n_dias >= 3 THEN sm.media  ELSE fs.media  END, 2) AS media_prev,
     ROUND(CASE WHEN sm.n_dias >= 3 THEN sm.desvio ELSE fs.desvio END, 2) AS desvio_prev,

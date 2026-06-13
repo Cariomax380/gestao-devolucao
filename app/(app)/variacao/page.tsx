@@ -3,7 +3,7 @@ import { createClient } from '@/lib/supabase-server'
 import { Suspense } from 'react'
 import { getMotoristaMap, resolveMotorista } from '@/lib/motoristas'
 import { VariacaoClient } from './VariacaoClient'
-import { FiltroMes } from './FiltroMes'
+import { FiltroMes } from '@/components/layout/FiltroMes'
 import { ErroRPC } from '@/components/layout/ErroRPC'
 
 export default async function VariacaoPage({ searchParams }: { searchParams: Promise<{ periodo?: string }> }) {

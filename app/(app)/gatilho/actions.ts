@@ -37,6 +37,13 @@ export async function criarRelato(input: RelatoInput): Promise<{ error?: string;
   if (!['relatado', 'em_acompanhamento', 'concluido'].includes(input.status)) {
     return { error: 'Status inválido' }
   }
+  if (!isFinite(input.devs_dia) || !isFinite(input.limiar) || input.devs_dia < 0 || input.limiar < 0) {
+    return { error: 'Valores numéricos inválidos' }
+  }
+  const CATEGORIAS_VALIDAS = ['operacional', 'comercial', 'externo', 'sistemico']
+  if (input.categoria && !CATEGORIAS_VALIDAS.includes(input.categoria)) {
+    return { error: 'Categoria inválida' }
+  }
 
   // Filtra respostas preenchidas; salva null se nenhuma
   const cincoPFiltered = input.cincoP?.filter(s => s.trim())
@@ -87,7 +94,10 @@ export async function criarRelato(input: RelatoInput): Promise<{ error?: string;
       user_id:             user.id,
       gatilho_contexto:    gatilhoContexto,
     })
-    if (acaoErr) console.error('[criarRelato] erro ao gerar plano de ação:', acaoErr.message)
+    if (acaoErr) {
+      // plano de ação é best-effort — não bloqueia o relato, mas loga para observabilidade
+      console.warn('[criarRelato] plano de ação não criado:', acaoErr.message)
+    }
   }
 
   revalidatePath('/gatilho')
@@ -112,6 +122,10 @@ export async function editarRelato(input: EditarRelatoInput): Promise<{ error?: 
   if (input.relato.trim().length > 2000) return { error: 'Relato muito longo (máx. 2.000 caracteres).' }
   if (!['relatado', 'em_acompanhamento', 'concluido'].includes(input.status)) {
     return { error: 'Status inválido' }
+  }
+  const CATEGORIAS_VALIDAS = ['operacional', 'comercial', 'externo', 'sistemico']
+  if (input.categoria && !CATEGORIAS_VALIDAS.includes(input.categoria)) {
+    return { error: 'Categoria inválida' }
   }
 
   const cincoPFiltered = input.cincoP?.filter(s => s.trim())
@@ -161,7 +175,7 @@ export async function buscarDetalheGatilhoPdv(
     .select('codigo_pdv, cliente, status_final, classificacao_motivo, recorrencia_pdv, responsavel_acionado, resultado_contato, horario_apontamento')
     .eq('motorista', motorista)
     .eq('data_rota', data_rota)
-    .eq('motivo', 'PDV fechado')
+    .like('motivo', 'PDV fechado%')
     .gt('pdvs_devolvidos', 0)
     .order('codigo_pdv')
 

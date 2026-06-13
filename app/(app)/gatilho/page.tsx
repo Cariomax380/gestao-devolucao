@@ -1,6 +1,6 @@
 export const dynamic = 'force-dynamic'
 import { createClient } from '@/lib/supabase-server'
-import { FiltroMes } from '@/app/(app)/variacao/FiltroMes'
+import { FiltroMes } from '@/components/layout/FiltroMes'
 import { ErroRPC } from '@/components/layout/ErroRPC'
 import { GatilhoClient } from './GatilhoClient'
 import { Suspense } from 'react'

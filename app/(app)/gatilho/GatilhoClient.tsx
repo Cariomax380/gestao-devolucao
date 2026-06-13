@@ -149,7 +149,7 @@ function KpiCard({ label, value, alerta, sub }: { label: string; value: string; 
   )
 }
 
-function TooltipDia({ active, payload }: any) {
+function TooltipDia({ active, payload }: { active?: boolean; payload?: { payload: GatilhoDia }[] }) {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload as GatilhoDia
   return (
@@ -518,15 +518,12 @@ function CincoPorques({ value, onChange }: { value: string[]; onChange: (v: stri
 
 // ── RelatoModal ──────────────────────────────────────────────────────────────
 
-function RelatoModal({
-  m, limiar, tipo, onClose, editRelato,
-}: {
-  m:           GatilhoMotorista
-  limiar:      number
-  tipo:        'total' | 'fechado'
-  onClose:     () => void
-  editRelato?: GatilhoRelato
-}) {
+type RelatoModalProps =
+  | { variante: 'motorista'; m: GatilhoMotorista; limiar: number; tipo: 'total' | 'fechado'; onClose: () => void; editRelato?: GatilhoRelato }
+  | { variante: 'geral'; d: GatilhoDia; gatilho: number; onClose: () => void; editRelato?: GatilhoRelato }
+
+function RelatoModal(props: RelatoModalProps) {
+  const { onClose, editRelato } = props
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [relato,      setRelato]      = useState(() => editRelato?.relato ?? '')
@@ -541,8 +538,6 @@ function RelatoModal({
     return arr.slice(0, 5)
   })
   const [categoria,   setCategoria]   = useState(() => editRelato?.categoria ?? '')
-
-  const delta = m.devs_dia - limiar
 
   useEffect(() => {
     function handleKey(e: KeyboardEvent) {
@@ -569,13 +564,28 @@ function RelatoModal({
           categoria:   catVal,
         })
         if (result.error) { setErro(result.error); return }
+      } else if (props.variante === 'geral') {
+        const result = await criarRelato({
+          motorista:   '',
+          data_rota:   props.d.data_rota,
+          tipo:        'geral',
+          devs_dia:    props.d.pct_dev,
+          limiar:      props.gatilho,
+          relato:      relato.trim(),
+          responsavel: responsavel.trim() || undefined,
+          status,
+          gerarAcao,
+          cincoP,
+          categoria:   catVal,
+        })
+        if (result.error) { setErro(result.error); return }
       } else {
         const result = await criarRelato({
-          motorista:   m.motorista,
-          data_rota:   m.data_rota,
-          tipo,
-          devs_dia:    m.devs_dia,
-          limiar,
+          motorista:   props.m.motorista,
+          data_rota:   props.m.data_rota,
+          tipo:        props.tipo,
+          devs_dia:    props.m.devs_dia,
+          limiar:      props.limiar,
           relato:      relato.trim(),
           responsavel: responsavel.trim() || undefined,
           status,
@@ -590,11 +600,14 @@ function RelatoModal({
     })
   }
 
+  const isGeral = props.variante === 'geral'
+  const modalId = isGeral ? 'relato-geral-modal-title' : 'relato-modal-title'
+
   return (
     <div
       role="dialog"
       aria-modal="true"
-      aria-labelledby="relato-modal-title"
+      aria-labelledby={modalId}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
       onClick={onClose}
     >
@@ -604,18 +617,40 @@ function RelatoModal({
       >
         {/* Header */}
         <div className="bg-[#003087] text-white px-6 py-4 shrink-0">
-          <p className="text-xs font-medium text-blue-200 uppercase tracking-wider mb-0.5">
-            {editRelato ? 'Editar relato' : 'Relato de estouro'} — {tipo === 'total' ? 'Dev. Total' : 'PDV Fechado'}
-          </p>
-          <h3 id="relato-modal-title" className="font-bold text-lg leading-tight">{m.nome_motorista}</h3>
-          <p className="text-blue-200 text-sm">{fmtData(m.data_rota)} · {m.motorista}</p>
+          {isGeral ? (
+            <>
+              <p className="text-xs font-medium text-blue-200 uppercase tracking-wider mb-0.5">
+                {editRelato ? 'Editar relato' : 'Relato de estouro'} — Devolução Geral (frota)
+              </p>
+              <h3 id={modalId} className="font-bold text-lg leading-tight">{fmtData(props.d.data_rota)}</h3>
+              <p className="text-blue-200 text-sm">{props.d.pdvs_fat.toLocaleString()} faturados · {props.d.pdvs_dev} devolvidos</p>
+            </>
+          ) : (
+            <>
+              <p className="text-xs font-medium text-blue-200 uppercase tracking-wider mb-0.5">
+                {editRelato ? 'Editar relato' : 'Relato de estouro'} — {props.tipo === 'total' ? 'Dev. Total' : 'PDV Fechado'}
+              </p>
+              <h3 id={modalId} className="font-bold text-lg leading-tight">{props.m.nome_motorista}</h3>
+              <p className="text-blue-200 text-sm">{fmtData(props.m.data_rota)} · {props.m.motorista}</p>
+            </>
+          )}
         </div>
 
         {/* Info pills */}
         <div className="px-6 py-3 bg-red-50 border-b border-red-100 flex gap-5 text-sm shrink-0">
-          <span className="text-gray-600">Dev. Dia: <strong className="text-red-600">{m.devs_dia}</strong></span>
-          <span className="text-gray-600">Limiar: <strong className="text-gray-800">{limiar}</strong></span>
-          <span className="text-gray-600">Δ: <strong className="text-red-600">+{fmtLimiar(delta)}</strong></span>
+          {isGeral ? (
+            <>
+              <span className="text-gray-600">% Dev: <strong className="text-red-600">{props.d.pct_dev.toFixed(2)}%</strong></span>
+              <span className="text-gray-600">Gatilho: <strong className="text-gray-800">{props.gatilho.toFixed(2)}%</strong></span>
+              <span className="text-gray-600">Δ: <strong className="text-red-600">+{(props.d.pct_dev - props.gatilho).toFixed(2)}%</strong></span>
+            </>
+          ) : (
+            <>
+              <span className="text-gray-600">Dev. Dia: <strong className="text-red-600">{props.m.devs_dia}</strong></span>
+              <span className="text-gray-600">Limiar: <strong className="text-gray-800">{props.limiar}</strong></span>
+              <span className="text-gray-600">Δ: <strong className="text-red-600">+{fmtLimiar(props.m.devs_dia - props.limiar)}</strong></span>
+            </>
+          )}
         </div>
 
         {/* Form */}
@@ -630,7 +665,9 @@ function RelatoModal({
               rows={4}
               required
               maxLength={2000}
-              placeholder="Descreva o que foi apurado, causa identificada, ação tomada..."
+              placeholder={isGeral
+                ? 'Descreva o contexto do estouro de frota, causas e ações tomadas...'
+                : 'Descreva o que foi apurado, causa identificada, ação tomada...'}
               className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-[#003087] focus:outline-none resize-none"
             />
           </div>
@@ -693,7 +730,11 @@ function RelatoModal({
               />
               <div>
                 <p className="text-sm font-semibold text-gray-700">Gerar item no Plano de Ação</p>
-                <p className="text-xs text-gray-500 mt-0.5">Cria uma ação de prioridade alta vinculada a este estouro</p>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {isGeral
+                    ? 'Cria uma ação de prioridade alta para este estouro de frota'
+                    : 'Cria uma ação de prioridade alta vinculada a este estouro'}
+                </p>
               </div>
             </label>
           )}
@@ -738,198 +779,6 @@ function RelatoModal({
               disabled={isPending || !relato.trim()}
               className="flex-1 bg-[#003087] text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-[#002070] transition-colors disabled:opacity-50"
             >
-              {isPending ? 'Salvando...' : editRelato ? 'Atualizar Relato' : 'Salvar Relato'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-// ── RelatoGeralModal ─────────────────────────────────────────────────────────
-
-function RelatoGeralModal({ d, gatilho, onClose, editRelato }: { d: GatilhoDia; gatilho: number; onClose: () => void; editRelato?: GatilhoRelato }) {
-  const router = useRouter()
-  const [isPending, startTransition] = useTransition()
-  const [relato,      setRelato]      = useState(() => editRelato?.relato ?? '')
-  const [responsavel, setResponsavel] = useState(() => editRelato?.responsavel ?? '')
-  const [status,      setStatus]      = useState<GatilhoRelato['status']>(() => editRelato?.status ?? 'relatado')
-  const [gerarAcao,   setGerarAcao]   = useState(false)
-  const [erro,        setErro]        = useState<string | null>(null)
-  const [aplicar5p,   setAplicar5p]   = useState(() => !!(editRelato?.cinco_porques?.length))
-  const [porques,     setPorques]     = useState<string[]>(() => {
-    const arr = editRelato?.cinco_porques ? [...editRelato.cinco_porques] : []
-    while (arr.length < 5) arr.push('')
-    return arr.slice(0, 5)
-  })
-  const [categoriaG,  setCategoriaG]  = useState(() => editRelato?.categoria ?? '')
-
-  const delta = d.pct_dev - gatilho
-
-  useEffect(() => {
-    function handleKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKey)
-    return () => document.removeEventListener('keydown', handleKey)
-  }, [onClose])
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!relato.trim()) return
-    setErro(null)
-    startTransition(async () => {
-      const cincoP = aplicar5p ? porques : undefined
-      const catVal = (categoriaG || undefined) as RelatoInput['categoria']
-      if (editRelato) {
-        const result = await editarRelato({
-          id:          editRelato.id,
-          relato:      relato.trim(),
-          responsavel: responsavel.trim() || undefined,
-          status,
-          cincoP,
-          categoria:   catVal,
-        })
-        if (result.error) { setErro(result.error); return }
-      } else {
-        const result = await criarRelato({
-          motorista:   '',
-          data_rota:   d.data_rota,
-          tipo:        'geral',
-          devs_dia:    d.pct_dev,
-          limiar:      gatilho,
-          relato:      relato.trim(),
-          responsavel: responsavel.trim() || undefined,
-          status,
-          gerarAcao,
-          cincoP,
-          categoria:   catVal,
-        })
-        if (result.error) { setErro(result.error); return }
-      }
-      router.refresh()
-      onClose()
-    })
-  }
-
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="relato-geral-modal-title"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4 flex flex-col max-h-[88vh]" onClick={e => e.stopPropagation()}>
-        <div className="bg-[#003087] text-white px-6 py-4 shrink-0">
-          <p className="text-xs font-medium text-blue-200 uppercase tracking-wider mb-0.5">
-            {editRelato ? 'Editar relato' : 'Relato de estouro'} — Devolução Geral (frota)
-          </p>
-          <h3 id="relato-geral-modal-title" className="font-bold text-lg leading-tight">{fmtData(d.data_rota)}</h3>
-          <p className="text-blue-200 text-sm">{d.pdvs_fat.toLocaleString()} faturados · {d.pdvs_dev} devolvidos</p>
-        </div>
-        <div className="px-6 py-3 bg-red-50 border-b border-red-100 flex gap-5 text-sm shrink-0">
-          <span className="text-gray-600">% Dev: <strong className="text-red-600">{d.pct_dev.toFixed(2)}%</strong></span>
-          <span className="text-gray-600">Gatilho: <strong className="text-gray-800">{gatilho.toFixed(2)}%</strong></span>
-          <span className="text-gray-600">Δ: <strong className="text-red-600">+{delta.toFixed(2)}%</strong></span>
-        </div>
-        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Relato *</label>
-            <textarea
-              value={relato}
-              onChange={e => setRelato(e.target.value)}
-              rows={4}
-              required
-              maxLength={2000}
-              placeholder="Descreva o contexto do estouro de frota, causas e ações tomadas..."
-              className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:border-[#003087] focus:outline-none resize-none"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Responsável</label>
-              <input
-                type="text"
-                value={responsavel}
-                onChange={e => setResponsavel(e.target.value)}
-                placeholder="Nome do responsável"
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">Status</label>
-              <select
-                value={status}
-                onChange={e => setStatus(e.target.value as GatilhoRelato['status'])}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none bg-white"
-              >
-                <option value="relatado">Relatado</option>
-                <option value="em_acompanhamento">Em acompanhamento</option>
-                <option value="concluido">Concluído</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Categoria da causa raiz */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1.5">
-              Categoria da causa raiz
-            </label>
-            <select
-              value={categoriaG}
-              onChange={e => setCategoriaG(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:border-[#003087] focus:outline-none bg-white"
-            >
-              <option value="">Não categorizado</option>
-              <option value="operacional">Operacional</option>
-              <option value="comercial">Comercial</option>
-              <option value="externo">Externo</option>
-              <option value="sistemico">Sistêmico</option>
-            </select>
-          </div>
-
-          {!editRelato && (
-            <label className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-100 rounded-lg cursor-pointer select-none">
-              <input type="checkbox" checked={gerarAcao} onChange={e => setGerarAcao(e.target.checked)} className="mt-0.5 accent-[#003087]" />
-              <div>
-                <p className="text-sm font-semibold text-gray-700">Gerar item no Plano de Ação</p>
-                <p className="text-xs text-gray-500 mt-0.5">Cria uma ação de prioridade alta para este estouro de frota</p>
-              </div>
-            </label>
-          )}
-
-          {/* 5 Porquês — análise de causa raiz */}
-          <div className="border border-[#003087]/10 rounded-lg overflow-hidden">
-            <label className="flex items-center gap-3 p-3 cursor-pointer select-none bg-blue-50/60 hover:bg-blue-50 transition-colors">
-              <input
-                type="checkbox"
-                checked={aplicar5p}
-                onChange={e => setAplicar5p(e.target.checked)}
-                className="accent-[#003087]"
-              />
-              <div className="flex-1">
-                <p className="text-sm font-semibold text-gray-700">Aplicar análise 5 Porquês</p>
-                <p className="text-xs text-gray-500 mt-0.5">Identifica a causa raiz progressivamente — pergunta por pergunta</p>
-              </div>
-              <span className="text-base select-none">🔍</span>
-            </label>
-            {aplicar5p && (
-              <div className="px-3 pb-3 pt-2">
-                <CincoPorques value={porques} onChange={setPorques} />
-              </div>
-            )}
-          </div>
-
-          {erro && <p className="text-sm text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2">{erro}</p>}
-          <div className="flex gap-3 pt-1">
-            <button type="button" onClick={onClose} disabled={isPending}
-              className="flex-1 border border-gray-200 rounded-lg py-2.5 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50">
-              Cancelar
-            </button>
-            <button type="submit" disabled={isPending || !relato.trim()}
-              className="flex-1 bg-[#003087] text-white rounded-lg py-2.5 text-sm font-semibold hover:bg-[#002070] transition-colors disabled:opacity-50">
               {isPending ? 'Salvando...' : editRelato ? 'Atualizar Relato' : 'Salvar Relato'}
             </button>
           </div>
@@ -1092,7 +941,8 @@ function TabGeral({ dados, gatilho, media, desvio, sigma, periodoRef, relatos }:
       </div>
 
       {modalDados && (
-        <RelatoGeralModal
+        <RelatoModal
+          variante="geral"
           d={modalDados}
           gatilho={gatilho}
           editRelato={editModal ?? undefined}
@@ -1147,7 +997,7 @@ function DrilldownPdvFechado({ pdvs }: { pdvs: DetalheGatilhoPdv[] | 'erro' | un
           {pdvs.map((p, i) => {
             const sCor = p.status_final ? (STATUS_PDV_COR[p.status_final] ?? { bg: '#F3F4F6', text: '#6B7280' }) : null
             return (
-              <tr key={i} className="border-b border-blue-50 last:border-0">
+              <tr key={p.codigo_pdv ?? i} className="border-b border-blue-50 last:border-0">
                 <td className="py-1.5 pr-4 font-mono font-semibold text-[#003087]">
                   {p.codigo_pdv ?? '—'}
                 </td>
@@ -1235,20 +1085,19 @@ function TabMotoristas({
     }
   }
 
-  const limiarFn  = (_m: GatilhoMotorista) => medianLimiar
   const relatoKey = (m: GatilhoMotorista) => `${m.motorista}|${m.data_rota}|${tipo}`
 
   // Filtro secundário por status de relato (sobre filtrados já filtrados por busca/estouro)
   const filtradosVisiveis = useMemo(() => {
     if (filtroRelato === 'todos') return filtrados
     return filtrados.filter(m => {
-      if (m.devs_dia <= limiarFn(m)) return false
+      if (m.devs_dia <= medianLimiar) return false
       const temRelato = !!relatos[relatoKey(m)]
       return filtroRelato === 'sem_relato' ? !temRelato : temRelato
     })
   }, [filtrados, filtroRelato, relatos, tipo, medianLimiar])
 
-  const estouros       = dados.filter(m => m.devs_dia > limiarFn(m))
+  const estouros       = dados.filter(m => m.devs_dia > medianLimiar)
   const motoristasUniq = new Set(estouros.map(m => m.motorista)).size
   const diasUniq       = new Set(estouros.map(m => m.data_rota)).size
   const semRelato      = estouros.filter(m => !relatos[relatoKey(m)]).length
@@ -1257,7 +1106,7 @@ function TabMotoristas({
   const reincMap = useMemo(() => {
     const map: Record<string, number> = {}
     for (const m of dados) {
-      if (m.devs_dia > limiarFn(m)) map[m.motorista] = (map[m.motorista] ?? 0) + 1
+      if (m.devs_dia > medianLimiar) map[m.motorista] = (map[m.motorista] ?? 0) + 1
     }
     return map
   }, [dados, medianLimiar])
@@ -1276,9 +1125,9 @@ function TabMotoristas({
   function handleExport() {
     const header = ['Data', 'Motorista', 'Cód.', 'Faturados', 'Devoluções', 'Limiar', 'Δ', 'Zona', 'Reincidências', 'Status Relato', 'Responsável', 'Categoria', 'Relato', 'P1', 'P2', 'P3', 'P4', 'P5']
     const linhas = [header, ...filtrados.map(m => {
-      const lim  = limiarFn(m)
+      const lim  = medianLimiar
       const rel  = relatos[relatoKey(m)]
-      const zona = getZonaFrota(m.devs_dia, limiarFn(m))
+      const zona = getZonaFrota(m.devs_dia, medianLimiar)
       const p5   = Array.from({ length: 5 }, (_, i) => rel?.cinco_porques?.[i] ?? '')
       return [m.data_rota, m.nome_motorista, m.motorista, m.fat_dia, m.devs_dia, fmtLimiar(lim), fmtLimiar(m.devs_dia - lim), zona, reincMap[m.motorista] ?? 0, rel?.status ?? '', rel?.responsavel ?? '', rel?.categoria ?? '', rel?.relato ?? '', ...p5]
     })]
@@ -1422,14 +1271,12 @@ function TabMotoristas({
             </thead>
             <tbody>
               {filtradosVisiveis.map((m, i) => {
-                const limiar      = limiarFn(m)
+                const limiar      = medianLimiar
                 const zona        = getZonaFrota(m.devs_dia, limiar)
                 const delta       = m.devs_dia - limiar
                 const isEstouro   = m.devs_dia > limiar
                 const relExist    = relatos[relatoKey(m)]
                 const relStatus   = relExist ? STATUS_RELATO[relExist.status] : null
-                const dias        = diasPendente(m.data_rota)
-                const sla         = corSLA(dias)
                 const reincCount  = reincMap[m.motorista] ?? 0
                 const ultimaConc  = ultimaConclusaoMap[m.motorista]
                 const reincidiu   = isEstouro && !relExist && !!ultimaConc && m.data_rota > ultimaConc
@@ -1489,20 +1336,24 @@ function TabMotoristas({
                             relato={relExist!}
                             onEdit={() => { setEditModal(relExist!); setModalDados({ m, limiar }) }}
                           />
-                        ) : (
-                          <div className="flex flex-col items-center gap-0.5">
-                            <button
-                              onClick={() => setModalDados({ m, limiar })}
-                              className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap transition-colors"
-                              style={{ backgroundColor: sla.bg, color: sla.text }}
-                            >
-                              ⚠ Pendente · {dias}d
-                            </button>
-                            {reincidiu && (
-                              <span className="text-[9px] text-orange-600 font-semibold whitespace-nowrap">↩ reincidiu</span>
-                            )}
-                          </div>
-                        )
+                        ) : (() => {
+                          const dias = diasPendente(m.data_rota)
+                          const sla  = corSLA(dias)
+                          return (
+                            <div className="flex flex-col items-center gap-0.5">
+                              <button
+                                onClick={() => setModalDados({ m, limiar })}
+                                className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide whitespace-nowrap transition-colors"
+                                style={{ backgroundColor: sla.bg, color: sla.text }}
+                              >
+                                ⚠ Pendente · {dias}d
+                              </button>
+                              {reincidiu && (
+                                <span className="text-[9px] text-orange-600 font-semibold whitespace-nowrap">↩ reincidiu</span>
+                              )}
+                            </div>
+                          )
+                        })()
                       ) : (
                         <span className="text-gray-300 text-xs">—</span>
                       )}
@@ -1549,6 +1400,7 @@ function TabMotoristas({
       {/* Modal de relato */}
       {modalDados && (
         <RelatoModal
+          variante="motorista"
           m={modalDados.m}
           limiar={modalDados.limiar}
           tipo={tipo}
@@ -1558,6 +1410,15 @@ function TabMotoristas({
       )}
     </div>
   )
+}
+
+function calcLimiarFrota(dados: GatilhoMotorista[], sigma: number): number {
+  const seen = new Set<string>()
+  const unique = dados.filter(m => { if (seen.has(m.motorista)) return false; seen.add(m.motorista); return true })
+  if (!unique.length) return 0
+  const avgMedia  = unique.reduce((s, m) => s + m.media_prev,  0) / unique.length
+  const avgDesvio = unique.reduce((s, m) => s + m.desvio_prev, 0) / unique.length
+  return applyLimiar(avgMedia + sigma * avgDesvio)
 }
 
 export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Props) {
@@ -1583,35 +1444,17 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
   const gatilhoGeral = mediaGeral + sigma * desvioGeral
 
   // Gatilho de frota para Dev. Total: média das médias individuais (1 entrada por motorista)
-  const medianLimiarTotal = useMemo(() => {
-    const seen = new Set<string>()
-    const unique = total.filter(m => { if (seen.has(m.motorista)) return false; seen.add(m.motorista); return true })
-    if (!unique.length) return 0
-    const avgMedia  = unique.reduce((s, m) => s + m.media_prev,  0) / unique.length
-    const avgDesvio = unique.reduce((s, m) => s + m.desvio_prev, 0) / unique.length
-    return applyLimiar(avgMedia + sigma * avgDesvio)
-  }, [total, sigma])
+  const medianLimiarTotal   = useMemo(() => calcLimiarFrota(total,   sigma), [total,   sigma])
 
   // Gatilho de frota para PDV Fechado
-  const medianLimiarFechado = useMemo(() => {
-    const seen = new Set<string>()
-    const unique = fechado.filter(m => { if (seen.has(m.motorista)) return false; seen.add(m.motorista); return true })
-    if (!unique.length) return 0
-    const avgMedia  = unique.reduce((s, m) => s + m.media_prev,  0) / unique.length
-    const avgDesvio = unique.reduce((s, m) => s + m.desvio_prev, 0) / unique.length
-    return applyLimiar(avgMedia + sigma * avgDesvio)
-  }, [fechado, sigma])
+  const medianLimiarFechado = useMemo(() => calcLimiarFrota(fechado, sigma), [fechado, sigma])
 
   const periodoRef = geral[0]?.periodo_ref ?? total[0]?.periodo_ref ?? '—'
 
-  // Limiar único de frota — mesmo valor para todos os motoristas
-  const limTotal   = (_m: GatilhoMotorista) => medianLimiarTotal
-  const limFechado = (_m: GatilhoMotorista) => medianLimiarFechado
-
   // KPIs
   const diasCrit       = geral.filter(d => d.pct_dev > gatilhoGeral).length
-  const totalEventos   = total.filter(m => m.devs_dia > limTotal(m)).length
-  const fechadoEventos = fechado.filter(m => m.devs_dia > limFechado(m)).length
+  const totalEventos   = total.filter(m => m.devs_dia > medianLimiarTotal).length
+  const fechadoEventos = fechado.filter(m => m.devs_dia > medianLimiarFechado).length
 
   // Filtros para aba Dev. Total
   const totalFiltrado = useMemo(() => {
@@ -1619,7 +1462,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
     const r = busca
       ? total.filter(m => m.nome_motorista.toLowerCase().includes(q) || m.motorista.includes(q))
       : total
-    return soEstouro ? r.filter(m => m.devs_dia > limTotal(m)) : r
+    return soEstouro ? r.filter(m => m.devs_dia > medianLimiarTotal) : r
   }, [total, busca, soEstouro, medianLimiarTotal])
 
   // Filtros para aba PDV Fechado
@@ -1628,7 +1471,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
     const r = busca
       ? fechado.filter(m => m.nome_motorista.toLowerCase().includes(q) || m.motorista.includes(q))
       : fechado
-    return soEstouro ? r.filter(m => m.devs_dia > limFechado(m)) : r
+    return soEstouro ? r.filter(m => m.devs_dia > medianLimiarFechado) : r
   }, [fechado, busca, soEstouro, medianLimiarFechado])
 
   // Alerta precoce — motoristas em 70–99% do gatilho numérico
@@ -1636,8 +1479,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
     [...new Set(
       total
         .filter(m => {
-          const limiar = limTotal(m)
-          const p = limiar > 0 ? (m.devs_dia / limiar) * 100 : 0
+          const p = medianLimiarTotal > 0 ? (m.devs_dia / medianLimiarTotal) * 100 : 0
           return p >= 70 && p < 100
         })
         .map(m => m.nome_motorista)
@@ -1648,8 +1490,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
     [...new Set(
       fechado
         .filter(m => {
-          const limiar = limFechado(m)
-          const p = limiar > 0 ? (m.devs_dia / limiar) * 100 : 0
+          const p = medianLimiarFechado > 0 ? (m.devs_dia / medianLimiarFechado) * 100 : 0
           return p >= 70 && p < 100
         })
         .map(m => m.nome_motorista)
@@ -1663,7 +1504,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
   const reinciTotalCount = useMemo(() => {
     const map: Record<string, number> = {}
     for (const m of total) {
-      if (m.devs_dia > limTotal(m)) map[m.motorista] = (map[m.motorista] ?? 0) + 1
+      if (m.devs_dia > medianLimiarTotal) map[m.motorista] = (map[m.motorista] ?? 0) + 1
     }
     return Object.values(map).filter(c => c > 1).length
   }, [total, medianLimiarTotal])
@@ -1671,7 +1512,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
   const reinciFechadoCount = useMemo(() => {
     const map: Record<string, number> = {}
     for (const m of fechado) {
-      if (m.devs_dia > limFechado(m)) map[m.motorista] = (map[m.motorista] ?? 0) + 1
+      if (m.devs_dia > medianLimiarFechado) map[m.motorista] = (map[m.motorista] ?? 0) + 1
     }
     return Object.values(map).filter(c => c > 1).length
   }, [fechado, medianLimiarFechado])
@@ -1683,10 +1524,10 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
       if (d.pct_dev > gatilhoGeral && !relatos[`|${d.data_rota}|geral`] && diasPendente(d.data_rota) > 3) count++
     }
     for (const m of total) {
-      if (m.devs_dia > limTotal(m) && !relatos[`${m.motorista}|${m.data_rota}|total`] && diasPendente(m.data_rota) > 3) count++
+      if (m.devs_dia > medianLimiarTotal && !relatos[`${m.motorista}|${m.data_rota}|total`] && diasPendente(m.data_rota) > 3) count++
     }
     for (const m of fechado) {
-      if (m.devs_dia > limFechado(m) && !relatos[`${m.motorista}|${m.data_rota}|fechado`] && diasPendente(m.data_rota) > 3) count++
+      if (m.devs_dia > medianLimiarFechado && !relatos[`${m.motorista}|${m.data_rota}|fechado`] && diasPendente(m.data_rota) > 3) count++
     }
     return count
   }, [geral, total, fechado, relatos, gatilhoGeral, medianLimiarTotal, medianLimiarFechado])
@@ -1736,13 +1577,13 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
         <KpiCard
           label="Gatilho Dev. Total (frota)"
           value={`${fmtLimiar(medianLimiarTotal)} dev/dia`}
-          sub={`${totalEventos} estouro(s) · ${totalEventos - total.filter(m => relatos[`${m.motorista}|${m.data_rota}|total`] && m.devs_dia > limTotal(m)).length} sem relato`}
+          sub={`${totalEventos} estouro(s) · ${totalEventos - total.filter(m => relatos[`${m.motorista}|${m.data_rota}|total`] && m.devs_dia > medianLimiarTotal).length} sem relato`}
           alerta={totalEventos > 0}
         />
         <KpiCard
           label="Gatilho PDV Fechado (frota)"
           value={`${fmtLimiar(medianLimiarFechado)} dev/dia`}
-          sub={`${fechadoEventos} estouro(s) · ${fechadoEventos - fechado.filter(m => relatos[`${m.motorista}|${m.data_rota}|fechado`] && m.devs_dia > limFechado(m)).length} sem relato`}
+          sub={`${fechadoEventos} estouro(s) · ${fechadoEventos - fechado.filter(m => relatos[`${m.motorista}|${m.data_rota}|fechado`] && m.devs_dia > medianLimiarFechado).length} sem relato`}
           alerta={fechadoEventos > 0}
         />
       </div>
