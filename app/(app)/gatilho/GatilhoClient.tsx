@@ -35,9 +35,10 @@ function fmtData(d: string) {
   return p.length >= 3 ? `${p[2]}/${p[1]}` : d
 }
 
-/** Qtd é sempre inteiro — arredonda para cima para que devs_dia = ceil(limiar) não seja estouro. */
+/** Normaliza para 2 casas decimais (precisão do SQL) antes do ceil,
+ *  evitando drift de ponto flutuante que inflaria o limiar em +1. */
 function applyLimiar(raw: number): number {
-  return Math.ceil(raw)
+  return Math.ceil(Math.round(raw * 100) / 100)
 }
 
 /** Formata limiar: inteiro sem decimais, float com 1 casa. */
@@ -117,7 +118,7 @@ function ZonaBadge({ zona }: { zona: Zona }) {
 function UsoBarra({ valor, gatilho }: { valor: number; gatilho: number }) {
   const pct   = gatilho > 0 ? Math.round((valor / gatilho) * 100) : 0
   const clamp = Math.min(pct, 100)
-  const cor   = pct >= 100 ? '#EF4444' : pct >= 70 ? '#F59E0B' : '#10B981'
+  const cor   = pct > 100 ? '#EF4444' : pct >= 70 ? '#F59E0B' : '#10B981'
   return (
     <div className="flex items-center gap-2">
       <div className="w-20 bg-gray-100 rounded-full h-1.5 overflow-hidden shrink-0">
@@ -1335,7 +1336,7 @@ function TabMotoristas({
                   <tr
                     key={`${m.data_rota}-${m.motorista}-${i}`}
                     className="border-b border-gray-50"
-                    style={{ backgroundColor: zona !== 'normal' ? c.rowBg : undefined }}
+                    style={{ backgroundColor: isEstouro ? '#FFF5F5' : undefined }}
                   >
                     <td className="py-2.5 px-4 font-semibold text-[#003087] whitespace-nowrap">
                       {fmtData(m.data_rota)}
