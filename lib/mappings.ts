@@ -33,7 +33,7 @@ export const MOTIVO_MAP: Record<string, { label: string; classificacao: string }
   'closed POS':                            { label: 'PDV fechado',                  classificacao: 'Mercado'   },
   'Closed POS':                            { label: 'PDV fechado',                  classificacao: 'Mercado'   },
   'POC closed':                            { label: 'PDV fechado',                  classificacao: 'Mercado'   },
-  'POC closed after working hours':        { label: 'PDV fechado fora do horário',  classificacao: 'Mercado'   },
+  'POC closed after working hours':        { label: 'PDV fechado',                  classificacao: 'Mercado'   },
 
   // ── SEM DINHEIRO ───────────────────────────────────────────────────────────
   'No money':                              { label: 'Sem dinheiro',                 classificacao: 'Mercado'   },

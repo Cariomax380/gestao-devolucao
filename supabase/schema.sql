@@ -1005,7 +1005,7 @@ BEGIN
       d.motorista,
       d.data_rota,
       COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                             AS dev_total,
-      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo = 'PDV fechado')::bigint AS dev_fechado
+      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo LIKE 'PDV fechado%')::bigint AS dev_fechado
     FROM devolucoes d
     WHERE d.periodo = v_mes_prev
       AND d.motorista IS NOT NULL AND d.motorista != ''
@@ -1057,7 +1057,7 @@ BEGIN
       d.motorista,
       d.data_rota,
       COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                             AS dev_total,
-      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo = 'PDV fechado')::bigint AS dev_fechado,
+      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo LIKE 'PDV fechado%')::bigint AS dev_fechado,
       COUNT(*)::bigint                                                                    AS fat
     FROM devolucoes d
     WHERE d.periodo LIKE v_mes_atual || '%'
@@ -1119,7 +1119,7 @@ BEGIN
     FROM devolucoes d
     WHERE (p_periodo IS NULL OR d.periodo LIKE p_periodo || '%')
       AND d.status_final != 'tratativa_aberta'
-      AND d.motivo = 'PDV fechado'
+      AND d.motivo LIKE 'PDV fechado%'
       AND (d.pdvs_devolvidos > 0 OR d.pdv_repasse > 0)
   ),
   agg AS (
