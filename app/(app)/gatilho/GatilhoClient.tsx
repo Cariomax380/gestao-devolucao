@@ -156,11 +156,11 @@ function TooltipDia({ active, payload }: any) {
 
 type Ofensor = { motorista: string; nome: string; dias: number; piorDia: number; dataPior: string }
 
-function TopOfensores({ dados, sigma, medianLimiar }: { dados: GatilhoMotorista[]; sigma: number; medianLimiar: number }) {
+function TopOfensores({ dados, medianLimiar }: { dados: GatilhoMotorista[]; medianLimiar: number }) {
   const top: Ofensor[] = useMemo(() => {
     const mapa = new Map<string, Ofensor>()
     for (const m of dados) {
-      const limiar = Math.max(applyLimiar(m.media_prev + sigma * m.desvio_prev), medianLimiar)
+      const limiar = medianLimiar
       if (m.devs_dia <= limiar) continue
       const ex = mapa.get(m.motorista)
       if (!ex) {
@@ -175,7 +175,7 @@ function TopOfensores({ dados, sigma, medianLimiar }: { dados: GatilhoMotorista[
       }
     }
     return [...mapa.values()].sort((a, b) => b.dias - a.dias || b.piorDia - a.piorDia).slice(0, 5)
-  }, [dados, sigma])
+  }, [dados, medianLimiar])
 
   if (top.length === 0) return null
   return (
@@ -1127,7 +1127,7 @@ function TabMotoristas({
   const [modalDados,   setModalDados]   = useState<{ m: GatilhoMotorista; limiar: number } | null>(null)
   const [editModal,    setEditModal]    = useState<GatilhoRelato | null>(null)
 
-  const limiarFn  = (m: GatilhoMotorista) => Math.max(applyLimiar(m.media_prev + sigma * m.desvio_prev), medianLimiar)
+  const limiarFn  = (_m: GatilhoMotorista) => medianLimiar
   const relatoKey = (m: GatilhoMotorista) => `${m.motorista}|${m.data_rota}|${tipo}`
 
   // Filtro secundário por status de relato (sobre filtrados já filtrados por busca/estouro)
@@ -1138,8 +1138,7 @@ function TabMotoristas({
       const temRelato = !!relatos[relatoKey(m)]
       return filtroRelato === 'sem_relato' ? !temRelato : temRelato
     })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtrados, filtroRelato, relatos, tipo, sigma])
+  }, [filtrados, filtroRelato, relatos, tipo, medianLimiar])
 
   const estouros       = dados.filter(m => m.devs_dia > limiarFn(m))
   const motoristasUniq = new Set(estouros.map(m => m.motorista)).size
@@ -1153,8 +1152,7 @@ function TabMotoristas({
       if (m.devs_dia > limiarFn(m)) map[m.motorista] = (map[m.motorista] ?? 0) + 1
     }
     return map
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dados, sigma])
+  }, [dados, medianLimiar])
 
   // Mapa de última conclusão: motorista → data_rota mais recente com relato "concluido"
   const ultimaConclusaoMap = useMemo(() => {
@@ -1184,10 +1182,7 @@ function TabMotoristas({
       {/* Stats banner — limiar mediano da frota como referência */}
       <div className="bg-[#FFF8DC] border border-[#F2C800]/40 rounded-xl px-5 py-3 flex flex-wrap gap-x-8 gap-y-1.5 text-sm">
         <span className="text-gray-600">
-          Limiar ({sigma}σ): <strong className="text-red-500">por motorista</strong>
-        </span>
-        <span className="text-gray-600">
-          Mediano frota: <strong className="text-red-500">{fmtLimiar(medianLimiar)} dev/dia</strong>
+          Gatilho frota ({sigma}σ): <strong className="text-red-500">{fmtLimiar(medianLimiar)} dev/dia</strong>
         </span>
         <span className="text-gray-400 text-xs self-center">Referência: {periodoRef}</span>
         <button
@@ -1233,7 +1228,7 @@ function TabMotoristas({
       ) : null}
 
       {/* Top ofensores para causa raiz */}
-      <TopOfensores dados={dados} sigma={sigma} medianLimiar={medianLimiar} />
+      <TopOfensores dados={dados} medianLimiar={medianLimiar} />
 
       {/* Alerta precoce */}
       {quase.length > 0 && (
@@ -1461,24 +1456,31 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
   const desvioGeral  = geral[0]?.desvio_prev ?? 0
   const gatilhoGeral = mediaGeral + sigma * desvioGeral
 
-  // Limiar mediano para Dev. Total (referência visual — cada linha tem seu próprio limiar)
+  // Gatilho de frota para Dev. Total: média das médias individuais (1 entrada por motorista)
   const medianLimiarTotal = useMemo(() => {
-    const arr = [...total].map(m => applyLimiar(m.media_prev + sigma * m.desvio_prev)).sort((a, b) => a - b)
-    return arr[Math.floor(arr.length / 2)] ?? 0
+    const seen = new Set<string>()
+    const unique = total.filter(m => { if (seen.has(m.motorista)) return false; seen.add(m.motorista); return true })
+    if (!unique.length) return 0
+    const avgMedia  = unique.reduce((s, m) => s + m.media_prev,  0) / unique.length
+    const avgDesvio = unique.reduce((s, m) => s + m.desvio_prev, 0) / unique.length
+    return applyLimiar(avgMedia + sigma * avgDesvio)
   }, [total, sigma])
 
-  // Limiar mediano para PDV Fechado (referência visual)
+  // Gatilho de frota para PDV Fechado
   const medianLimiarFechado = useMemo(() => {
-    const arr = [...fechado].map(m => applyLimiar(m.media_prev + sigma * m.desvio_prev)).sort((a, b) => a - b)
-    return arr[Math.floor(arr.length / 2)] ?? 0
+    const seen = new Set<string>()
+    const unique = fechado.filter(m => { if (seen.has(m.motorista)) return false; seen.add(m.motorista); return true })
+    if (!unique.length) return 0
+    const avgMedia  = unique.reduce((s, m) => s + m.media_prev,  0) / unique.length
+    const avgDesvio = unique.reduce((s, m) => s + m.desvio_prev, 0) / unique.length
+    return applyLimiar(avgMedia + sigma * avgDesvio)
   }, [fechado, sigma])
 
   const periodoRef = geral[0]?.periodo_ref ?? total[0]?.periodo_ref ?? '—'
 
-  // Limiar efetivo: individual com piso na mediana da frota.
-  // Evita que motoristas com histórico baixo sejam flagados por estarem no nível da frota.
-  const limTotal   = (m: GatilhoMotorista) => Math.max(applyLimiar(m.media_prev + sigma * m.desvio_prev), medianLimiarTotal)
-  const limFechado = (m: GatilhoMotorista) => Math.max(applyLimiar(m.media_prev + sigma * m.desvio_prev), medianLimiarFechado)
+  // Limiar único de frota — mesmo valor para todos os motoristas
+  const limTotal   = (_m: GatilhoMotorista) => medianLimiarTotal
+  const limFechado = (_m: GatilhoMotorista) => medianLimiarFechado
 
   // KPIs
   const diasCrit       = geral.filter(d => d.pct_dev > gatilhoGeral).length
@@ -1492,7 +1494,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
       ? total.filter(m => m.nome_motorista.toLowerCase().includes(q) || m.motorista.includes(q))
       : total
     return soEstouro ? r.filter(m => m.devs_dia > limTotal(m)) : r
-  }, [total, busca, soEstouro, sigma, medianLimiarTotal])
+  }, [total, busca, soEstouro, medianLimiarTotal])
 
   // Filtros para aba PDV Fechado
   const fechadoFiltrado = useMemo(() => {
@@ -1501,7 +1503,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
       ? fechado.filter(m => m.nome_motorista.toLowerCase().includes(q) || m.motorista.includes(q))
       : fechado
     return soEstouro ? r.filter(m => m.devs_dia > limFechado(m)) : r
-  }, [fechado, busca, soEstouro, sigma, medianLimiarFechado])
+  }, [fechado, busca, soEstouro, medianLimiarFechado])
 
   // Alerta precoce — motoristas em 70–99% do gatilho numérico
   const totalQuase = useMemo(() =>
@@ -1514,7 +1516,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
         })
         .map(m => m.nome_motorista)
     )].slice(0, 6),
-  [total, sigma, medianLimiarTotal])
+  [total, medianLimiarTotal])
 
   const fechadoQuase = useMemo(() =>
     [...new Set(
@@ -1526,7 +1528,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
         })
         .map(m => m.nome_motorista)
     )].slice(0, 6),
-  [fechado, sigma, medianLimiarFechado])
+  [fechado, medianLimiarFechado])
 
   // ── Relato geral — contagem para KPI ─────────────────────────────────────
   const semRelatoGeral = geral.filter(d => d.pct_dev > gatilhoGeral && !relatos[`|${d.data_rota}|geral`]).length
@@ -1538,7 +1540,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
       if (m.devs_dia > limTotal(m)) map[m.motorista] = (map[m.motorista] ?? 0) + 1
     }
     return Object.values(map).filter(c => c > 1).length
-  }, [total, sigma, medianLimiarTotal])
+  }, [total, medianLimiarTotal])
 
   const reinciFechadoCount = useMemo(() => {
     const map: Record<string, number> = {}
@@ -1546,7 +1548,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
       if (m.devs_dia > limFechado(m)) map[m.motorista] = (map[m.motorista] ?? 0) + 1
     }
     return Object.values(map).filter(c => c > 1).length
-  }, [fechado, sigma, medianLimiarFechado])
+  }, [fechado, medianLimiarFechado])
 
   // ── Relatos atrasados > 3d ────────────────────────────────────────────────
   const atrasados3d = useMemo(() => {
@@ -1561,7 +1563,7 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
       if (m.devs_dia > limFechado(m) && !relatos[`${m.motorista}|${m.data_rota}|fechado`] && diasPendente(m.data_rota) > 3) count++
     }
     return count
-  }, [geral, total, fechado, relatos, gatilhoGeral, sigma, medianLimiarTotal, medianLimiarFechado])
+  }, [geral, total, fechado, relatos, gatilhoGeral, medianLimiarTotal, medianLimiarFechado])
 
   return (
     <div className="space-y-5">
@@ -1606,13 +1608,13 @@ export function GatilhoClient({ geral, total, fechado, relatos, initialTab }: Pr
           alerta={diasCrit > 0}
         />
         <KpiCard
-          label="Limiar Dev. Total (mediano)"
+          label="Gatilho Dev. Total (frota)"
           value={`${fmtLimiar(medianLimiarTotal)} dev/dia`}
           sub={`${totalEventos} estouro(s) · ${totalEventos - total.filter(m => relatos[`${m.motorista}|${m.data_rota}|total`] && m.devs_dia > limTotal(m)).length} sem relato`}
           alerta={totalEventos > 0}
         />
         <KpiCard
-          label="Limiar PDV Fechado (mediano)"
+          label="Gatilho PDV Fechado (frota)"
           value={`${fmtLimiar(medianLimiarFechado)} dev/dia`}
           sub={`${fechadoEventos} estouro(s) · ${fechadoEventos - fechado.filter(m => relatos[`${m.motorista}|${m.data_rota}|fechado`] && m.devs_dia > limFechado(m)).length} sem relato`}
           alerta={fechadoEventos > 0}
