@@ -1004,8 +1004,8 @@ BEGIN
     SELECT
       d.motorista,
       d.data_rota,
-      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                             AS dev_total,
-      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo LIKE 'PDV fechado%')::bigint AS dev_fechado
+      COUNT(DISTINCT CASE WHEN d.pdvs_devolvidos > 0 THEN d.codigo_pdv END)::bigint                                   AS dev_total,
+      COUNT(DISTINCT CASE WHEN d.pdvs_devolvidos > 0 AND d.motivo LIKE 'PDV fechado%' THEN d.codigo_pdv END)::bigint AS dev_fechado
     FROM devolucoes d
     WHERE d.periodo = v_mes_prev
       AND d.motorista IS NOT NULL AND d.motorista != ''
@@ -1056,9 +1056,9 @@ BEGIN
     SELECT
       d.motorista,
       d.data_rota,
-      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0)::bigint                             AS dev_total,
-      COUNT(*) FILTER (WHERE d.pdvs_devolvidos > 0 AND d.motivo LIKE 'PDV fechado%')::bigint AS dev_fechado,
-      COUNT(*)::bigint                                                                    AS fat
+      COUNT(DISTINCT CASE WHEN d.pdvs_devolvidos > 0 THEN d.codigo_pdv END)::bigint                                   AS dev_total,
+      COUNT(DISTINCT CASE WHEN d.pdvs_devolvidos > 0 AND d.motivo LIKE 'PDV fechado%' THEN d.codigo_pdv END)::bigint AS dev_fechado,
+      COUNT(DISTINCT d.codigo_pdv)::bigint                                                                           AS fat
     FROM devolucoes d
     WHERE d.periodo LIKE v_mes_atual || '%'
       AND d.motorista IS NOT NULL AND d.motorista != ''
