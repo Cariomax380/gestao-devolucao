@@ -135,6 +135,40 @@ export async function editarRelato(input: EditarRelatoInput): Promise<{ error?: 
   return { ok: true }
 }
 
+// ── Drill-down PDV Fechado ────────────────────────────────────────────────────
+
+export type DetalheGatilhoPdv = {
+  codigo_pdv:           string | null
+  cliente:              string | null
+  status_final:         string | null
+  classificacao_motivo: string | null
+  recorrencia_pdv:      number
+  responsavel_acionado: string | null
+  resultado_contato:    string | null
+  horario_apontamento:  string | null
+}
+
+export async function buscarDetalheGatilhoPdv(
+  motorista: string,
+  data_rota: string,
+): Promise<{ data?: DetalheGatilhoPdv[]; error?: string }> {
+  const supabase = await createClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { error: 'Não autorizado' }
+
+  const { data, error } = await supabase
+    .from('devolucoes')
+    .select('codigo_pdv, cliente, status_final, classificacao_motivo, recorrencia_pdv, responsavel_acionado, resultado_contato, horario_apontamento')
+    .eq('motorista', motorista)
+    .eq('data_rota', data_rota)
+    .eq('motivo', 'PDV fechado')
+    .gt('pdvs_devolvidos', 0)
+    .order('codigo_pdv')
+
+  if (error) return { error: error.message }
+  return { data: (data ?? []) as DetalheGatilhoPdv[] }
+}
+
 export async function resetarRelato(id: string): Promise<{ error?: string; ok?: boolean }> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()

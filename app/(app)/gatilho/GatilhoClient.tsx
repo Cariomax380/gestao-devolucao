@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useTransition, useRef, useEffect } from 'react'
+import React, { useState, useMemo, useTransition, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import {
@@ -8,7 +8,7 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts'
 import type { GatilhoDia, GatilhoMotorista, GatilhoRelato } from '@/types'
-import { criarRelato, editarRelato, resetarRelato, type RelatoInput } from './actions'
+import { criarRelato, editarRelato, resetarRelato, buscarDetalheGatilhoPdv, type RelatoInput, type DetalheGatilhoPdv } from './actions'
 
 interface Props {
   geral:      GatilhoDia[]
@@ -1103,6 +1103,92 @@ function TabGeral({ dados, gatilho, media, desvio, sigma, periodoRef, relatos }:
   )
 }
 
+// ── DrilldownPdvFechado ───────────────────────────────────────────────────────
+
+const STATUS_PDV_COR: Record<string, { bg: string; text: string }> = {
+  devolvido:          { bg: '#FEE2E2', text: '#DC2626' },
+  devolvido_parcial:  { bg: '#FEF3C7', text: '#D97706' },
+  reagendado:         { bg: '#DBEAFE', text: '#2563EB' },
+  tratativa_aberta:   { bg: '#FEF9C3', text: '#CA8A04' },
+  em_tratamento:      { bg: '#EDE9FE', text: '#7C3AED' },
+  entregue:           { bg: '#D1FAE5', text: '#059669' },
+}
+
+function DrilldownPdvFechado({ pdvs }: { pdvs: DetalheGatilhoPdv[] | 'erro' | undefined }) {
+  if (pdvs === undefined) {
+    return (
+      <div className="flex items-center gap-2 py-2 text-xs text-gray-400">
+        <span className="inline-block w-3 h-3 border-2 border-blue-300 border-t-transparent rounded-full animate-spin" />
+        Carregando PDVs…
+      </div>
+    )
+  }
+  if (pdvs === 'erro') {
+    return <p className="text-xs text-red-500 py-2">Erro ao carregar detalhes.</p>
+  }
+  if (!pdvs.length) {
+    return <p className="text-xs text-gray-400 py-2">Nenhum PDV fechado encontrado para este dia.</p>
+  }
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-xs min-w-[640px]">
+        <thead>
+          <tr className="text-[10px] font-bold text-gray-400 uppercase tracking-wider border-b border-blue-100">
+            <th className="text-left py-1.5 pr-4 whitespace-nowrap">Código PDV</th>
+            <th className="text-left py-1.5 pr-4">Cliente</th>
+            <th className="text-left py-1.5 pr-4 whitespace-nowrap">Status</th>
+            <th className="text-left py-1.5 pr-4">Classificação</th>
+            <th className="text-center py-1.5 pr-4 whitespace-nowrap">Recidência</th>
+            <th className="text-left py-1.5 pr-4 whitespace-nowrap">Horário</th>
+            <th className="text-left py-1.5">Responsável / Resultado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pdvs.map((p, i) => {
+            const sCor = p.status_final ? (STATUS_PDV_COR[p.status_final] ?? { bg: '#F3F4F6', text: '#6B7280' }) : null
+            return (
+              <tr key={i} className="border-b border-blue-50 last:border-0">
+                <td className="py-1.5 pr-4 font-mono font-semibold text-[#003087]">
+                  {p.codigo_pdv ?? '—'}
+                </td>
+                <td className="py-1.5 pr-4 max-w-[180px] truncate text-gray-700" title={p.cliente ?? ''}>
+                  {p.cliente ?? '—'}
+                </td>
+                <td className="py-1.5 pr-4">
+                  {sCor ? (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase whitespace-nowrap"
+                      style={{ backgroundColor: sCor.bg, color: sCor.text }}
+                    >
+                      {p.status_final}
+                    </span>
+                  ) : '—'}
+                </td>
+                <td className="py-1.5 pr-4 text-gray-500 max-w-[140px] truncate" title={p.classificacao_motivo ?? ''}>
+                  {p.classificacao_motivo ?? '—'}
+                </td>
+                <td className="py-1.5 pr-4 text-center">
+                  {(p.recorrencia_pdv ?? 0) > 1
+                    ? <span className="font-bold text-orange-600">{p.recorrencia_pdv}x</span>
+                    : <span className="text-gray-300">—</span>}
+                </td>
+                <td className="py-1.5 pr-4 font-mono text-gray-500 whitespace-nowrap">
+                  {p.horario_apontamento ?? '—'}
+                </td>
+                <td className="py-1.5 text-gray-500">
+                  {p.responsavel_acionado
+                    ? <><span className="text-gray-700">{p.responsavel_acionado}</span>{p.resultado_contato && <span className="text-gray-400"> · {p.resultado_contato}</span>}</>
+                    : '—'}
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // ── TabMotoristas ─────────────────────────────────────────────────────────────
 interface TabMotoristaProps {
   dados:        GatilhoMotorista[]
@@ -1130,9 +1216,24 @@ function TabMotoristas({
   busca, soEstouro, onBusca, onSoEstouro,
   tipo, relatos,
 }: TabMotoristaProps) {
-  const [filtroRelato, setFiltroRelato] = useState<FiltroRelato>('todos')
-  const [modalDados,   setModalDados]   = useState<{ m: GatilhoMotorista; limiar: number } | null>(null)
-  const [editModal,    setEditModal]    = useState<GatilhoRelato | null>(null)
+  const [filtroRelato,  setFiltroRelato]  = useState<FiltroRelato>('todos')
+  const [modalDados,    setModalDados]    = useState<{ m: GatilhoMotorista; limiar: number } | null>(null)
+  const [editModal,     setEditModal]     = useState<GatilhoRelato | null>(null)
+  const [expandedKey,   setExpandedKey]   = useState<string | null>(null)
+  const [detailCache,   setDetailCache]   = useState<Record<string, DetalheGatilhoPdv[] | 'erro'>>({})
+  const [, startDetail] = useTransition()
+
+  function handleExpand(m: GatilhoMotorista) {
+    const key = `${m.motorista}|${m.data_rota}`
+    if (expandedKey === key) { setExpandedKey(null); return }
+    setExpandedKey(key)
+    if (!detailCache[key]) {
+      startDetail(async () => {
+        const res = await buscarDetalheGatilhoPdv(m.motorista, m.data_rota)
+        setDetailCache(prev => ({ ...prev, [key]: res.data ?? 'erro' }))
+      })
+    }
+  }
 
   const limiarFn  = (_m: GatilhoMotorista) => medianLimiar
   const relatoKey = (m: GatilhoMotorista) => `${m.motorista}|${m.data_rota}|${tipo}`
@@ -1322,8 +1423,7 @@ function TabMotoristas({
             <tbody>
               {filtradosVisiveis.map((m, i) => {
                 const limiar      = limiarFn(m)
-                const zona        = getZona(m.devs_dia, m.media_prev, m.desvio_prev, sigma)
-                const c           = ZONA[zona]
+                const zona        = getZonaFrota(m.devs_dia, limiar)
                 const delta       = m.devs_dia - limiar
                 const isEstouro   = m.devs_dia > limiar
                 const relExist    = relatos[relatoKey(m)]
@@ -1335,8 +1435,8 @@ function TabMotoristas({
                 const reincidiu   = isEstouro && !relExist && !!ultimaConc && m.data_rota > ultimaConc
                 const catInfo     = relExist?.categoria ? CATEGORIA[relExist.categoria] : null
                 return (
+                  <React.Fragment key={`${m.data_rota}-${m.motorista}-${i}`}>
                   <tr
-                    key={`${m.data_rota}-${m.motorista}-${i}`}
                     className="border-b border-gray-50"
                     style={{ backgroundColor: isEstouro ? '#FFF5F5' : undefined }}
                   >
@@ -1355,6 +1455,14 @@ function TabMotoristas({
                         <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-orange-600 mt-0.5">
                           🔁 {reincCount}x reincidente
                         </span>
+                      )}
+                      {tipo === 'fechado' && (
+                        <button
+                          onClick={e => { e.stopPropagation(); handleExpand(m) }}
+                          className="mt-1 text-[9px] font-semibold text-blue-500 hover:text-blue-700 transition-colors flex items-center gap-0.5"
+                        >
+                          {expandedKey === `${m.motorista}|${m.data_rota}` ? '▲ fechar' : '▼ ver PDVs'}
+                        </button>
                       )}
                     </td>
                     <td className="py-2.5 px-4 text-right text-gray-400 text-xs">{m.fat_dia.toLocaleString()}</td>
@@ -1400,6 +1508,17 @@ function TabMotoristas({
                       )}
                     </td>
                   </tr>
+                  {tipo === 'fechado' && expandedKey === `${m.motorista}|${m.data_rota}` && (
+                    <tr className="border-b border-blue-100">
+                      <td colSpan={9} className="px-4 py-3 bg-blue-50">
+                        <p className="text-[10px] font-bold text-[#003087] uppercase tracking-wider mb-2">
+                          PDVs fechados — {m.nome_motorista} · {fmtData(m.data_rota)}
+                        </p>
+                        <DrilldownPdvFechado pdvs={detailCache[`${m.motorista}|${m.data_rota}`]} />
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 )
               })}
               {filtradosVisiveis.length === 0 && (
