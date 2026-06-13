@@ -146,7 +146,7 @@ function ImportTabDevolucoes() {
         rows: Record<string, unknown>[]
         headers: string[]
       }>((resolve, reject) => {
-        const worker = new Worker('/xlsx-worker.js')
+        const worker = new Worker(new URL('../../workers/xlsx-worker.ts', import.meta.url))
         const timeout = setTimeout(() => {
           worker.terminate()
           reject(new Error('Tempo limite excedido ao processar o arquivo (>90s). Tente um arquivo menor.'))
