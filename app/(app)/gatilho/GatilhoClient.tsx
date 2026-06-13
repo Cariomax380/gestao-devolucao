@@ -54,6 +54,13 @@ function getZona(valor: number, media: number, desvio: number, sigma: number): Z
   return 'normal'
 }
 
+// Zona relativa ao limiar único de frota (TabMotoristas)
+function getZonaFrota(valor: number, limiar: number): Zona {
+  if (valor > limiar)        return 'critica'
+  if (valor >= limiar * 0.7) return 'atencao'
+  return 'normal'
+}
+
 const ZONA: Record<Zona, { label: string; bg: string; text: string; rowBg: string }> = {
   critica: { label: 'Crítica', bg: '#FEE2E2', text: '#DC2626', rowBg: '#FFF5F5' },
   atencao: { label: 'Atenção', bg: '#FEF3C7', text: '#D97706', rowBg: '#FFFDF0' },
@@ -1170,7 +1177,7 @@ function TabMotoristas({
     const linhas = [header, ...filtrados.map(m => {
       const lim  = limiarFn(m)
       const rel  = relatos[relatoKey(m)]
-      const zona = getZona(m.devs_dia, m.media_prev, m.desvio_prev, sigma)
+      const zona = getZonaFrota(m.devs_dia, limiarFn(m))
       const p5   = Array.from({ length: 5 }, (_, i) => rel?.cinco_porques?.[i] ?? '')
       return [m.data_rota, m.nome_motorista, m.motorista, m.fat_dia, m.devs_dia, fmtLimiar(lim), fmtLimiar(m.devs_dia - lim), zona, reincMap[m.motorista] ?? 0, rel?.status ?? '', rel?.responsavel ?? '', rel?.categoria ?? '', rel?.relato ?? '', ...p5]
     })]
